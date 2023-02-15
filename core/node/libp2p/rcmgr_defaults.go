@@ -1,660 +1,199 @@
 package libp2p
 
 import (
-	"encoding/json"
 	"fmt"
-	"math/bits"
-	"os"
-	"strings"
 
-	config "github.com/ipfs/go-ipfs/config"
+	"github.com/dustin/go-humanize"
 	"github.com/libp2p/go-libp2p"
-	rcmgr "github.com/libp2p/go-libp2p-resource-manager"
+	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
+	"github.com/pbnjay/memory"
 
-	"github.com/wI2L/jsondiff"
+	"github.com/ipfs/kubo/config"
+	"github.com/ipfs/kubo/core/node/libp2p/fd"
 )
+
+// We are doing some magic when parsing config files (we are using a map[string]interface{} to compare config files).
+// When you don't have a type the JSON Parse function cast numbers to float64 by default,
+// losing precision when writing the final number. So if we use math.MaxInt as our infinite number,
+// after writing the config file we will have 9223372036854776000 instead of 9223372036854775807,
+// making the parsing process fail. Setting 1e9 (1000000000) as "no limit" value. It also avoids to overflow on 32 bit architectures.
+const bigEnough = 1e9
+
+var infiniteBaseLimit = rcmgr.BaseLimit{
+	Streams:         bigEnough,
+	StreamsInbound:  bigEnough,
+	StreamsOutbound: bigEnough,
+	Conns:           bigEnough,
+	ConnsInbound:    bigEnough,
+	ConnsOutbound:   bigEnough,
+	FD:              bigEnough,
+	Memory:          bigEnough,
+}
+
+var noLimitIncrease = rcmgr.BaseLimitIncrease{
+	ConnsInbound:    0,
+	ConnsOutbound:   0,
+	Conns:           0,
+	StreamsInbound:  0,
+	StreamsOutbound: 0,
+	Streams:         0,
+	Memory:          0,
+	FDFraction:      0,
+}
 
 // This file defines implicit limit defaults used when Swarm.ResourceMgr.Enabled
 
-// adjustedDefaultLimits allows for tweaking defaults based on external factors,
-// such as values in Swarm.ConnMgr.HiWater config.
-func adjustedDefaultLimits(cfg config.SwarmConfig) rcmgr.DefaultLimitConfig {
-	// Run checks to avoid introducing regressions
-	if os.Getenv("IPFS_CHECK_RCMGR_DEFAULTS") != "" {
-		// FIXME: Broken. Being tracked in https://github.com/ipfs/go-ipfs/issues/8949.
-		checkImplicitDefaults()
+// createDefaultLimitConfig creates LimitConfig to pass to libp2p's resource manager.
+// The defaults follow the documentation in docs/libp2p-resource-management.md.
+// Any changes in the logic here should be reflected there.
+func createDefaultLimitConfig(cfg config.SwarmConfig) (rcmgr.ConcreteLimitConfig, error) {
+	maxMemoryDefaultString := humanize.Bytes(uint64(memory.TotalMemory()) / 2)
+	maxMemoryString := cfg.ResourceMgr.MaxMemory.WithDefault(maxMemoryDefaultString)
+	maxMemory, err := humanize.ParseBytes(maxMemoryString)
+	if err != nil {
+		return rcmgr.ConcreteLimitConfig{}, err
 	}
 
-	// Return to use unmodified static limits based on values from go-libp2p 0.18
-	// return defaultLimits
+	maxMemoryMB := maxMemory / (1024 * 1024)
+	maxFD := int(cfg.ResourceMgr.MaxFileDescriptors.WithDefault(int64(fd.GetNumFDs()) / 2))
 
-	// Adjust limits
-	// (based on https://github.com/filecoin-project/lotus/pull/8318/files)
-	// - give it more memory, up to 4G, min of 1G
-	// - if Swarm.ConnMgr.HighWater is too high, adjust Conn/FD/Stream limits
-	defaultLimits := rcmgr.DefaultLimits.WithSystemMemory(.125, 1<<30, 4<<30)
+	// We want to see this message on startup, that's why we are using fmt instead of log.
+	fmt.Printf(`
+Computing default go-libp2p Resource Manager limits based on:
+    - 'Swarm.ResourceMgr.MaxMemory': %q
+    - 'Swarm.ResourceMgr.MaxFileDescriptors': %d
 
-	// Do we need to adjust due to Swarm.ConnMgr.HighWater?
-	if cfg.ConnMgr.Type == "basic" {
-		maxconns := cfg.ConnMgr.HighWater
-		if 2*maxconns > defaultLimits.SystemBaseLimit.ConnsInbound {
-			// adjust conns to 2x to allow for two conns per peer (TCP+QUIC)
-			defaultLimits.SystemBaseLimit.ConnsInbound = logScale(2 * maxconns)
-			defaultLimits.SystemBaseLimit.ConnsOutbound = logScale(2 * maxconns)
-			defaultLimits.SystemBaseLimit.Conns = logScale(4 * maxconns)
+Applying any user-supplied overrides on top.
+Run 'ipfs swarm limit all' to see the resulting limits.
 
-			defaultLimits.SystemBaseLimit.StreamsInbound = logScale(16 * maxconns)
-			defaultLimits.SystemBaseLimit.StreamsOutbound = logScale(64 * maxconns)
-			defaultLimits.SystemBaseLimit.Streams = logScale(64 * maxconns)
+`, maxMemoryString, maxFD)
 
-			if 2*maxconns > defaultLimits.SystemBaseLimit.FD {
-				defaultLimits.SystemBaseLimit.FD = logScale(2 * maxconns)
-			}
+	// At least as of 2023-01-25, it's possible to open a connection that
+	// doesn't ask for any memory usage with the libp2p Resource Manager/Accountant
+	// (see https://github.com/libp2p/go-libp2p/issues/2010#issuecomment-1404280736).
+	// As a result, we can't curretly rely on Memory limits to full protect us.
+	// Until https://github.com/libp2p/go-libp2p/issues/2010 is addressed,
+	// we take a proxy now of restricting to 1 inbound connection per MB.
+	// Note: this is more generous than go-libp2p's default autoscaled limits which do
+	// 64 connections per 1GB
+	// (see https://github.com/libp2p/go-libp2p/blob/master/p2p/host/resource-manager/limit_defaults.go#L357 ).
+	systemConnsInbound := int(1 * maxMemoryMB)
 
-			defaultLimits.ServiceBaseLimit.StreamsInbound = logScale(8 * maxconns)
-			defaultLimits.ServiceBaseLimit.StreamsOutbound = logScale(32 * maxconns)
-			defaultLimits.ServiceBaseLimit.Streams = logScale(32 * maxconns)
+	scalingLimitConfig := rcmgr.ScalingLimitConfig{
+		SystemBaseLimit: rcmgr.BaseLimit{
+			Memory: int64(maxMemory),
+			FD:     maxFD,
 
-			defaultLimits.ProtocolBaseLimit.StreamsInbound = logScale(8 * maxconns)
-			defaultLimits.ProtocolBaseLimit.StreamsOutbound = logScale(32 * maxconns)
-			defaultLimits.ProtocolBaseLimit.Streams = logScale(32 * maxconns)
+			// By default, we just limit connections on the inbound side.
+			Conns:         bigEnough,
+			ConnsInbound:  systemConnsInbound,
+			ConnsOutbound: bigEnough,
+
+			Streams:         bigEnough,
+			StreamsInbound:  bigEnough,
+			StreamsOutbound: bigEnough,
+		},
+		SystemLimitIncrease: noLimitIncrease,
+
+		// Transient connections won't cause any memory to accounted for by the resource manager.
+		// Only established connections do.
+		// As a result, we can't rely on System.Memory to protect us from a bunch of transient connection being opened.
+		// We limit the same values as the System scope, but only allow the Transient scope to take 25% of what is allowed for the System scope.
+		TransientBaseLimit: rcmgr.BaseLimit{
+			Memory: int64(maxMemory / 4),
+			FD:     maxFD / 4,
+
+			Conns:         bigEnough,
+			ConnsInbound:  systemConnsInbound / 4,
+			ConnsOutbound: bigEnough,
+
+			Streams:         bigEnough,
+			StreamsInbound:  bigEnough,
+			StreamsOutbound: bigEnough,
+		},
+
+		TransientLimitIncrease: noLimitIncrease,
+
+		// Lets get out of the way of the allow list functionality.
+		// If someone specified "Swarm.ResourceMgr.Allowlist" we should let it go through.
+		AllowlistedSystemBaseLimit:     infiniteBaseLimit,
+		AllowlistedSystemLimitIncrease: noLimitIncrease,
+
+		AllowlistedTransientBaseLimit:     infiniteBaseLimit,
+		AllowlistedTransientLimitIncrease: noLimitIncrease,
+
+		// Keep it simple by not having Service, ServicePeer, Protocol, ProtocolPeer, Conn, or Stream limits.
+		ServiceBaseLimit:     infiniteBaseLimit,
+		ServiceLimitIncrease: noLimitIncrease,
+
+		ServicePeerBaseLimit:     infiniteBaseLimit,
+		ServicePeerLimitIncrease: noLimitIncrease,
+
+		ProtocolBaseLimit:     infiniteBaseLimit,
+		ProtocolLimitIncrease: noLimitIncrease,
+
+		ProtocolPeerBaseLimit:     infiniteBaseLimit,
+		ProtocolPeerLimitIncrease: noLimitIncrease,
+
+		ConnBaseLimit:     infiniteBaseLimit,
+		ConnLimitIncrease: noLimitIncrease,
+
+		StreamBaseLimit:     infiniteBaseLimit,
+		StreamLimitIncrease: noLimitIncrease,
+
+		// Limit the resources consumed by a peer.
+		// This doesn't protect us against intentional DoS attacks since an attacker can easily spin up multiple peers.
+		// We specify this limit against unintentional DoS attacks (e.g., a peer has a bug and is sending too much traffic intentionally).
+		// In that case we want to keep that peer's resource consumption contained.
+		// To keep this simple, we only constrain inbound connections and streams.
+		PeerBaseLimit: rcmgr.BaseLimit{
+			Memory:          bigEnough,
+			FD:              bigEnough,
+			Conns:           bigEnough,
+			ConnsInbound:    rcmgr.DefaultLimits.PeerBaseLimit.ConnsInbound,
+			ConnsOutbound:   bigEnough,
+			Streams:         bigEnough,
+			StreamsInbound:  rcmgr.DefaultLimits.PeerBaseLimit.StreamsInbound,
+			StreamsOutbound: bigEnough,
+		},
+		// Most limits don't see an increase because they're already infinite/bigEnough.
+		// The values that should scale based on the amount of memory allocated to libp2p need to increase accordingly.
+		PeerLimitIncrease: rcmgr.BaseLimitIncrease{
+			Memory:          0,
+			FDFraction:      0,
+			Conns:           0,
+			ConnsInbound:    rcmgr.DefaultLimits.PeerLimitIncrease.ConnsInbound,
+			ConnsOutbound:   0,
+			Streams:         0,
+			StreamsInbound:  rcmgr.DefaultLimits.PeerLimitIncrease.StreamsInbound,
+			StreamsOutbound: 0,
+		},
+	}
+
+	// Whatever limits libp2p has specifically tuned for its protocols/services we'll apply.
+	libp2p.SetDefaultServiceLimits(&scalingLimitConfig)
+
+	orig := scalingLimitConfig.Scale(int64(maxMemory), maxFD)
+	defaultLimitConfig := orig.ToPartialLimitConfig()
+
+	// Simple checks to overide autoscaling ensuring limits make sense versus the connmgr values.
+	// There are ways to break this, but this should catch most problems already.
+	// We might improve this in the future.
+	// See: https://github.com/ipfs/kubo/issues/9545
+	if cfg.ConnMgr.Type.WithDefault(config.DefaultConnMgrType) != "none" {
+		maxInboundConns := int64(defaultLimitConfig.System.ConnsInbound)
+		if connmgrHighWaterTimesTwo := cfg.ConnMgr.HighWater.WithDefault(config.DefaultConnMgrHighWater) * 2; maxInboundConns < connmgrHighWaterTimesTwo {
+			maxInboundConns = connmgrHighWaterTimesTwo
 		}
+
+		if maxInboundConns < config.DefaultResourceMgrMinInboundConns {
+			maxInboundConns = config.DefaultResourceMgrMinInboundConns
+		}
+
+		// Scale System.StreamsInbound as well, but use the existing ratio of StreamsInbound to ConnsInbound
+		defaultLimitConfig.System.StreamsInbound = rcmgr.LimitVal(maxInboundConns * int64(defaultLimitConfig.System.StreamsInbound) / int64(defaultLimitConfig.System.ConnsInbound))
+		defaultLimitConfig.System.ConnsInbound = rcmgr.LimitVal(maxInboundConns)
 	}
 
-	return defaultLimits
+	return defaultLimitConfig.Build(orig), nil
 }
-
-func logScale(val int) int {
-	bitlen := bits.Len(uint(val))
-	return 1 << bitlen
-}
-
-// checkImplicitDefaults compares libp2p defaults agains expected ones
-// and panics when they don't match. This ensures we are not surprised
-// by silent default limit changes when we update go-libp2p dependencies.
-func checkImplicitDefaults() {
-	ok := true
-
-	// Check 1: did go-libp2p-resource-manager's DefaultLimits change?
-	defaults, err := json.Marshal(rcmgr.DefaultLimits)
-	if err != nil {
-		log.Fatal(err)
-	}
-	changes, err := jsonDiff([]byte(expectedDefaultLimits), defaults)
-	if err != nil {
-		log.Fatal(err)
-	}
-	if len(changes) > 0 {
-		ok = false
-		log.Errorf("===> OOF! go-libp2p-resource-manager changed DefaultLimits\n"+
-			"=> changes ('test' represents the old value):\n%s\n"+
-			"=> go-libp2p-resource-manager DefaultLimits update needs a review:\n"+
-			"Please inspect if changes impact go-ipfs users, and update expectedDefaultLimits in rcmgr_defaults.go to remove this message",
-			strings.Join(changes, "\n"),
-		)
-	}
-
-	// Check 2: did go-libp2p's SetDefaultServiceLimits change?
-	testLimiter := rcmgr.NewStaticLimiter(rcmgr.DefaultLimits)
-	libp2p.SetDefaultServiceLimits(testLimiter)
-
-	serviceDefaults, err := json.Marshal(testLimiter)
-	if err != nil {
-		log.Fatal(err)
-	}
-	changes, err = jsonDiff([]byte(expectedDefaultServiceLimits), serviceDefaults)
-	if err != nil {
-		log.Fatal(err)
-	}
-	if len(changes) > 0 {
-		ok = false
-		log.Errorf("===> OOF! go-libp2p changed DefaultServiceLimits\n"+
-			"=> changes ('test' represents the old value):\n%s\n"+
-			"=> go-libp2p SetDefaultServiceLimits update needs a review:\n"+
-			"Please inspect if changes impact go-ipfs users, and update expectedDefaultServiceLimits in rcmgr_defaults.go to remove this message",
-			strings.Join(changes, "\n"),
-		)
-	}
-	if !ok {
-		log.Fatal("daemon will refuse to run with the resource manager until this is resolved")
-	}
-}
-
-// jsonDiff compares two strings and returns diff in JSON Patch format
-func jsonDiff(old []byte, updated []byte) ([]string, error) {
-	// generate 'invertible' patch which includes old values as "test" op
-	patch, err := jsondiff.CompareJSONOpts(old, updated, jsondiff.Invertible())
-	changes := make([]string, len(patch))
-	if err != nil {
-		return changes, err
-	}
-	for i, op := range patch {
-		changes[i] = fmt.Sprintf("  %s", op)
-	}
-	return changes, nil
-}
-
-// https://github.com/libp2p/go-libp2p-resource-manager/blob/v0.1.5/limit_defaults.go#L49
-const expectedDefaultLimits = `{
-  "SystemBaseLimit": {
-    "Streams": 16384,
-    "StreamsInbound": 4096,
-    "StreamsOutbound": 16384,
-    "Conns": 1024,
-    "ConnsInbound": 256,
-    "ConnsOutbound": 1024,
-    "FD": 512
-  },
-  "SystemMemory": {
-    "MemoryFraction": 0.125,
-    "MinMemory": 134217728,
-    "MaxMemory": 1073741824
-  },
-  "TransientBaseLimit": {
-    "Streams": 512,
-    "StreamsInbound": 128,
-    "StreamsOutbound": 512,
-    "Conns": 128,
-    "ConnsInbound": 32,
-    "ConnsOutbound": 128,
-    "FD": 128
-  },
-  "TransientMemory": {
-    "MemoryFraction": 1,
-    "MinMemory": 67108864,
-    "MaxMemory": 67108864
-  },
-  "ServiceBaseLimit": {
-    "Streams": 8192,
-    "StreamsInbound": 2048,
-    "StreamsOutbound": 8192,
-    "Conns": 0,
-    "ConnsInbound": 0,
-    "ConnsOutbound": 0,
-    "FD": 0
-  },
-  "ServiceMemory": {
-    "MemoryFraction": 0.03125,
-    "MinMemory": 67108864,
-    "MaxMemory": 268435456
-  },
-  "ServicePeerBaseLimit": {
-    "Streams": 512,
-    "StreamsInbound": 256,
-    "StreamsOutbound": 512,
-    "Conns": 0,
-    "ConnsInbound": 0,
-    "ConnsOutbound": 0,
-    "FD": 0
-  },
-  "ServicePeerMemory": {
-    "MemoryFraction": 0.0078125,
-    "MinMemory": 16777216,
-    "MaxMemory": 67108864
-  },
-  "ProtocolBaseLimit": {
-    "Streams": 4096,
-    "StreamsInbound": 1024,
-    "StreamsOutbound": 4096,
-    "Conns": 0,
-    "ConnsInbound": 0,
-    "ConnsOutbound": 0,
-    "FD": 0
-  },
-  "ProtocolMemory": {
-    "MemoryFraction": 0.015625,
-    "MinMemory": 67108864,
-    "MaxMemory": 134217728
-  },
-  "ProtocolPeerBaseLimit": {
-    "Streams": 512,
-    "StreamsInbound": 128,
-    "StreamsOutbound": 256,
-    "Conns": 0,
-    "ConnsInbound": 0,
-    "ConnsOutbound": 0,
-    "FD": 0
-  },
-  "ProtocolPeerMemory": {
-    "MemoryFraction": 0.0078125,
-    "MinMemory": 16777216,
-    "MaxMemory": 67108864
-  },
-  "PeerBaseLimit": {
-    "Streams": 1024,
-    "StreamsInbound": 512,
-    "StreamsOutbound": 1024,
-    "Conns": 16,
-    "ConnsInbound": 8,
-    "ConnsOutbound": 16,
-    "FD": 8
-  },
-  "PeerMemory": {
-    "MemoryFraction": 0.0078125,
-    "MinMemory": 67108864,
-    "MaxMemory": 134217728
-  },
-  "ConnBaseLimit": {
-    "Streams": 0,
-    "StreamsInbound": 0,
-    "StreamsOutbound": 0,
-    "Conns": 1,
-    "ConnsInbound": 1,
-    "ConnsOutbound": 1,
-    "FD": 1
-  },
-  "ConnMemory": 1048576,
-  "StreamBaseLimit": {
-    "Streams": 1,
-    "StreamsInbound": 1,
-    "StreamsOutbound": 1,
-    "Conns": 0,
-    "ConnsInbound": 0,
-    "ConnsOutbound": 0,
-    "FD": 0
-  },
-  "StreamMemory": 16777216
-}`
-
-// https://github.com/libp2p/go-libp2p/blob/v0.18.0/limits.go#L17
-const expectedDefaultServiceLimits = `{
-  "SystemLimits": {
-    "Streams": 16384,
-    "StreamsInbound": 4096,
-    "StreamsOutbound": 16384,
-    "Conns": 1024,
-    "ConnsInbound": 256,
-    "ConnsOutbound": 1024,
-    "FD": 512,
-    "Memory": 1073741824
-  },
-  "TransientLimits": {
-    "Streams": 512,
-    "StreamsInbound": 128,
-    "StreamsOutbound": 512,
-    "Conns": 128,
-    "ConnsInbound": 32,
-    "ConnsOutbound": 128,
-    "FD": 128,
-    "Memory": 67108864
-  },
-  "DefaultServiceLimits": {
-    "Streams": 8192,
-    "StreamsInbound": 2048,
-    "StreamsOutbound": 8192,
-    "Conns": 0,
-    "ConnsInbound": 0,
-    "ConnsOutbound": 0,
-    "FD": 0,
-    "Memory": 67108864
-  },
-  "DefaultServicePeerLimits": {
-    "Streams": 512,
-    "StreamsInbound": 256,
-    "StreamsOutbound": 512,
-    "Conns": 0,
-    "ConnsInbound": 0,
-    "ConnsOutbound": 0,
-    "FD": 0,
-    "Memory": 16777216
-  },
-  "ServiceLimits": {
-    "libp2p.autonat": {
-      "Streams": 128,
-      "StreamsInbound": 128,
-      "StreamsOutbound": 128,
-      "Conns": 0,
-      "ConnsInbound": 0,
-      "ConnsOutbound": 0,
-      "FD": 0,
-      "Memory": 67108864
-    },
-    "libp2p.holepunch": {
-      "Streams": 256,
-      "StreamsInbound": 128,
-      "StreamsOutbound": 128,
-      "Conns": 0,
-      "ConnsInbound": 0,
-      "ConnsOutbound": 0,
-      "FD": 0,
-      "Memory": 67108864
-    },
-    "libp2p.identify": {
-      "Streams": 256,
-      "StreamsInbound": 128,
-      "StreamsOutbound": 128,
-      "Conns": 0,
-      "ConnsInbound": 0,
-      "ConnsOutbound": 0,
-      "FD": 0,
-      "Memory": 67108864
-    },
-    "libp2p.ping": {
-      "Streams": 128,
-      "StreamsInbound": 128,
-      "StreamsOutbound": 128,
-      "Conns": 0,
-      "ConnsInbound": 0,
-      "ConnsOutbound": 0,
-      "FD": 0,
-      "Memory": 67108864
-    },
-    "libp2p.relay/v1": {
-      "Streams": 1024,
-      "StreamsInbound": 1024,
-      "StreamsOutbound": 1024,
-      "Conns": 0,
-      "ConnsInbound": 0,
-      "ConnsOutbound": 0,
-      "FD": 0,
-      "Memory": 67108864
-    },
-    "libp2p.relay/v2": {
-      "Streams": 1024,
-      "StreamsInbound": 1024,
-      "StreamsOutbound": 1024,
-      "Conns": 0,
-      "ConnsInbound": 0,
-      "ConnsOutbound": 0,
-      "FD": 0,
-      "Memory": 67108864
-    }
-  },
-  "ServicePeerLimits": {
-    "libp2p.autonat": {
-      "Streams": 2,
-      "StreamsInbound": 2,
-      "StreamsOutbound": 2,
-      "Conns": 0,
-      "ConnsInbound": 0,
-      "ConnsOutbound": 0,
-      "FD": 0,
-      "Memory": 557056
-    },
-    "libp2p.holepunch": {
-      "Streams": 2,
-      "StreamsInbound": 2,
-      "StreamsOutbound": 2,
-      "Conns": 0,
-      "ConnsInbound": 0,
-      "ConnsOutbound": 0,
-      "FD": 0,
-      "Memory": 557056
-    },
-    "libp2p.identify": {
-      "Streams": 32,
-      "StreamsInbound": 16,
-      "StreamsOutbound": 16,
-      "Conns": 0,
-      "ConnsInbound": 0,
-      "ConnsOutbound": 0,
-      "FD": 0,
-      "Memory": 8912896
-    },
-    "libp2p.ping": {
-      "Streams": 4,
-      "StreamsInbound": 2,
-      "StreamsOutbound": 3,
-      "Conns": 0,
-      "ConnsInbound": 0,
-      "ConnsOutbound": 0,
-      "FD": 0,
-      "Memory": 1114112
-    },
-    "libp2p.relay/v1": {
-      "Streams": 64,
-      "StreamsInbound": 64,
-      "StreamsOutbound": 64,
-      "Conns": 0,
-      "ConnsInbound": 0,
-      "ConnsOutbound": 0,
-      "FD": 0,
-      "Memory": 17825792
-    },
-    "libp2p.relay/v2": {
-      "Streams": 64,
-      "StreamsInbound": 64,
-      "StreamsOutbound": 64,
-      "Conns": 0,
-      "ConnsInbound": 0,
-      "ConnsOutbound": 0,
-      "FD": 0,
-      "Memory": 17825792
-    }
-  },
-  "DefaultProtocolLimits": {
-    "Streams": 4096,
-    "StreamsInbound": 1024,
-    "StreamsOutbound": 4096,
-    "Conns": 0,
-    "ConnsInbound": 0,
-    "ConnsOutbound": 0,
-    "FD": 0,
-    "Memory": 67108864
-  },
-  "DefaultProtocolPeerLimits": {
-    "Streams": 512,
-    "StreamsInbound": 128,
-    "StreamsOutbound": 256,
-    "Conns": 0,
-    "ConnsInbound": 0,
-    "ConnsOutbound": 0,
-    "FD": 0,
-    "Memory": 16777216
-  },
-  "ProtocolLimits": {
-    "/ipfs/id/1.0.0": {
-      "Streams": 4096,
-      "StreamsInbound": 1024,
-      "StreamsOutbound": 4096,
-      "Conns": 0,
-      "ConnsInbound": 0,
-      "ConnsOutbound": 0,
-      "FD": 0,
-      "Memory": 33554432
-    },
-    "/ipfs/id/push/1.0.0": {
-      "Streams": 4096,
-      "StreamsInbound": 1024,
-      "StreamsOutbound": 4096,
-      "Conns": 0,
-      "ConnsInbound": 0,
-      "ConnsOutbound": 0,
-      "FD": 0,
-      "Memory": 33554432
-    },
-    "/ipfs/ping/1.0.0": {
-      "Streams": 4096,
-      "StreamsInbound": 1024,
-      "StreamsOutbound": 4096,
-      "Conns": 0,
-      "ConnsInbound": 0,
-      "ConnsOutbound": 0,
-      "FD": 0,
-      "Memory": 67108864
-    },
-    "/libp2p/autonat/1.0.0": {
-      "Streams": 4096,
-      "StreamsInbound": 1024,
-      "StreamsOutbound": 4096,
-      "Conns": 0,
-      "ConnsInbound": 0,
-      "ConnsOutbound": 0,
-      "FD": 0,
-      "Memory": 67108864
-    },
-    "/libp2p/circuit/relay/0.1.0": {
-      "Streams": 1280,
-      "StreamsInbound": 1280,
-      "StreamsOutbound": 1280,
-      "Conns": 0,
-      "ConnsInbound": 0,
-      "ConnsOutbound": 0,
-      "FD": 0,
-      "Memory": 67108864
-    },
-    "/libp2p/circuit/relay/0.2.0/hop": {
-      "Streams": 1280,
-      "StreamsInbound": 1280,
-      "StreamsOutbound": 1280,
-      "Conns": 0,
-      "ConnsInbound": 0,
-      "ConnsOutbound": 0,
-      "FD": 0,
-      "Memory": 67108864
-    },
-    "/libp2p/circuit/relay/0.2.0/stop": {
-      "Streams": 1280,
-      "StreamsInbound": 1280,
-      "StreamsOutbound": 1280,
-      "Conns": 0,
-      "ConnsInbound": 0,
-      "ConnsOutbound": 0,
-      "FD": 0,
-      "Memory": 67108864
-    },
-    "/libp2p/dcutr": {
-      "Streams": 4096,
-      "StreamsInbound": 1024,
-      "StreamsOutbound": 4096,
-      "Conns": 0,
-      "ConnsInbound": 0,
-      "ConnsOutbound": 0,
-      "FD": 0,
-      "Memory": 67108864
-    },
-    "/p2p/id/delta/1.0.0": {
-      "Streams": 4096,
-      "StreamsInbound": 1024,
-      "StreamsOutbound": 4096,
-      "Conns": 0,
-      "ConnsInbound": 0,
-      "ConnsOutbound": 0,
-      "FD": 0,
-      "Memory": 33554432
-    }
-  },
-  "ProtocolPeerLimits": {
-    "/ipfs/id/1.0.0": {
-      "Streams": 32,
-      "StreamsInbound": 16,
-      "StreamsOutbound": 16,
-      "Conns": 0,
-      "ConnsInbound": 0,
-      "ConnsOutbound": 0,
-      "FD": 0,
-      "Memory": 8912896
-    },
-    "/ipfs/id/push/1.0.0": {
-      "Streams": 32,
-      "StreamsInbound": 16,
-      "StreamsOutbound": 16,
-      "Conns": 0,
-      "ConnsInbound": 0,
-      "ConnsOutbound": 0,
-      "FD": 0,
-      "Memory": 8912896
-    },
-    "/ipfs/ping/1.0.0": {
-      "Streams": 4,
-      "StreamsInbound": 2,
-      "StreamsOutbound": 3,
-      "Conns": 0,
-      "ConnsInbound": 0,
-      "ConnsOutbound": 0,
-      "FD": 0,
-      "Memory": 1114112
-    },
-    "/libp2p/autonat/1.0.0": {
-      "Streams": 2,
-      "StreamsInbound": 2,
-      "StreamsOutbound": 2,
-      "Conns": 0,
-      "ConnsInbound": 0,
-      "ConnsOutbound": 0,
-      "FD": 0,
-      "Memory": 557056
-    },
-    "/libp2p/circuit/relay/0.1.0": {
-      "Streams": 128,
-      "StreamsInbound": 128,
-      "StreamsOutbound": 128,
-      "Conns": 0,
-      "ConnsInbound": 0,
-      "ConnsOutbound": 0,
-      "FD": 0,
-      "Memory": 35651584
-    },
-    "/libp2p/circuit/relay/0.2.0/hop": {
-      "Streams": 128,
-      "StreamsInbound": 128,
-      "StreamsOutbound": 128,
-      "Conns": 0,
-      "ConnsInbound": 0,
-      "ConnsOutbound": 0,
-      "FD": 0,
-      "Memory": 35651584
-    },
-    "/libp2p/circuit/relay/0.2.0/stop": {
-      "Streams": 128,
-      "StreamsInbound": 128,
-      "StreamsOutbound": 128,
-      "Conns": 0,
-      "ConnsInbound": 0,
-      "ConnsOutbound": 0,
-      "FD": 0,
-      "Memory": 35651584
-    },
-    "/libp2p/dcutr": {
-      "Streams": 2,
-      "StreamsInbound": 2,
-      "StreamsOutbound": 2,
-      "Conns": 0,
-      "ConnsInbound": 0,
-      "ConnsOutbound": 0,
-      "FD": 0,
-      "Memory": 557056
-    },
-    "/p2p/id/delta/1.0.0": {
-      "Streams": 32,
-      "StreamsInbound": 16,
-      "StreamsOutbound": 16,
-      "Conns": 0,
-      "ConnsInbound": 0,
-      "ConnsOutbound": 0,
-      "FD": 0,
-      "Memory": 8912896
-    }
-  },
-  "DefaultPeerLimits": {
-    "Streams": 1024,
-    "StreamsInbound": 512,
-    "StreamsOutbound": 1024,
-    "Conns": 16,
-    "ConnsInbound": 8,
-    "ConnsOutbound": 16,
-    "FD": 8,
-    "Memory": 67108864
-  },
-  "PeerLimits": null,
-  "ConnLimits": {
-    "Streams": 0,
-    "StreamsInbound": 0,
-    "StreamsOutbound": 0,
-    "Conns": 1,
-    "ConnsInbound": 1,
-    "ConnsOutbound": 1,
-    "FD": 1,
-    "Memory": 1048576
-  },
-  "StreamLimits": {
-    "Streams": 1,
-    "StreamsInbound": 1,
-    "StreamsOutbound": 1,
-    "Conns": 0,
-    "ConnsInbound": 0,
-    "ConnsOutbound": 0,
-    "FD": 0,
-    "Memory": 16777216
-  }
-}`

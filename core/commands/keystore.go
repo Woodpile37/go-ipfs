@@ -7,7 +7,6 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,16 +14,16 @@ import (
 
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	keystore "github.com/ipfs/go-ipfs-keystore"
-	oldcmds "github.com/ipfs/go-ipfs/commands"
-	config "github.com/ipfs/go-ipfs/config"
-	cmdenv "github.com/ipfs/go-ipfs/core/commands/cmdenv"
-	"github.com/ipfs/go-ipfs/core/commands/e"
-	ke "github.com/ipfs/go-ipfs/core/commands/keyencode"
-	fsrepo "github.com/ipfs/go-ipfs/repo/fsrepo"
-	migrations "github.com/ipfs/go-ipfs/repo/fsrepo/migrations"
 	options "github.com/ipfs/interface-go-ipfs-core/options"
-	"github.com/libp2p/go-libp2p-core/crypto"
-	peer "github.com/libp2p/go-libp2p-core/peer"
+	oldcmds "github.com/ipfs/kubo/commands"
+	config "github.com/ipfs/kubo/config"
+	cmdenv "github.com/ipfs/kubo/core/commands/cmdenv"
+	"github.com/ipfs/kubo/core/commands/e"
+	ke "github.com/ipfs/kubo/core/commands/keyencode"
+	fsrepo "github.com/ipfs/kubo/repo/fsrepo"
+	migrations "github.com/ipfs/kubo/repo/fsrepo/migrations"
+	"github.com/libp2p/go-libp2p/core/crypto"
+	peer "github.com/libp2p/go-libp2p/core/peer"
 )
 
 var KeyCmd = &cmds.Command{
@@ -57,7 +56,7 @@ publish'.
 
 type KeyOutput struct {
 	Name string
-	Id   string
+	Id   string //nolint
 }
 
 type KeyOutputList struct {
@@ -68,7 +67,7 @@ type KeyOutputList struct {
 type KeyRenameOutput struct {
 	Was       string
 	Now       string
-	Id        string
+	Id        string //nolint
 	Overwrite bool
 }
 
@@ -276,7 +275,7 @@ elsewhere. For example, using openssl to get a PEM with public key:
 
 			switch exportFormat {
 			case keyFormatPemCleartextOption:
-				privKeyBytes, err := ioutil.ReadAll(outReader)
+				privKeyBytes, err := io.ReadAll(outReader)
 				if err != nil {
 					return err
 				}
@@ -344,7 +343,7 @@ The PEM format allows for key generation outside of the IPFS node:
 		}
 		defer file.Close()
 
-		data, err := ioutil.ReadAll(file)
+		data, err := io.ReadAll(file)
 		if err != nil {
 			return err
 		}

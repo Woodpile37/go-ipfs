@@ -4,7 +4,6 @@ import (
 	"errors"
 	_ "expvar"
 	"fmt"
-	"io/ioutil"
 	"net"
 	"net/http"
 	_ "net/http/pprof"
@@ -16,21 +15,23 @@ import (
 
 	multierror "github.com/hashicorp/go-multierror"
 
-	version "github.com/ipfs/go-ipfs"
-	utilmain "github.com/ipfs/go-ipfs/cmd/ipfs/util"
-	oldcmds "github.com/ipfs/go-ipfs/commands"
-	config "github.com/ipfs/go-ipfs/config"
-	cserial "github.com/ipfs/go-ipfs/config/serialize"
-	"github.com/ipfs/go-ipfs/core"
-	commands "github.com/ipfs/go-ipfs/core/commands"
-	"github.com/ipfs/go-ipfs/core/coreapi"
-	corehttp "github.com/ipfs/go-ipfs/core/corehttp"
-	corerepo "github.com/ipfs/go-ipfs/core/corerepo"
-	libp2p "github.com/ipfs/go-ipfs/core/node/libp2p"
-	nodeMount "github.com/ipfs/go-ipfs/fuse/node"
-	fsrepo "github.com/ipfs/go-ipfs/repo/fsrepo"
-	"github.com/ipfs/go-ipfs/repo/fsrepo/migrations"
-	"github.com/ipfs/go-ipfs/repo/fsrepo/migrations/ipfsfetcher"
+	version "github.com/ipfs/kubo"
+	utilmain "github.com/ipfs/kubo/cmd/ipfs/util"
+	oldcmds "github.com/ipfs/kubo/commands"
+	config "github.com/ipfs/kubo/config"
+	cserial "github.com/ipfs/kubo/config/serialize"
+	"github.com/ipfs/kubo/core"
+	commands "github.com/ipfs/kubo/core/commands"
+	"github.com/ipfs/kubo/core/coreapi"
+	corehttp "github.com/ipfs/kubo/core/corehttp"
+	corerepo "github.com/ipfs/kubo/core/corerepo"
+	libp2p "github.com/ipfs/kubo/core/node/libp2p"
+	nodeMount "github.com/ipfs/kubo/fuse/node"
+	fsrepo "github.com/ipfs/kubo/repo/fsrepo"
+	"github.com/ipfs/kubo/repo/fsrepo/migrations"
+	"github.com/ipfs/kubo/repo/fsrepo/migrations/ipfsfetcher"
+	p2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
+	pnet "github.com/libp2p/go-libp2p/core/pnet"
 	sockets "github.com/libp2p/go-socket-activation"
 
 	cmds "github.com/ipfs/go-ipfs-cmds"
@@ -60,9 +61,11 @@ const (
 	routingOptionDHTKwd       = "dht"
 	routingOptionDHTServerKwd = "dhtserver"
 	routingOptionNoneKwd      = "none"
+	routingOptionCustomKwd    = "custom"
 	routingOptionDefaultKwd   = "default"
+	routingOptionAutoKwd      = "auto"
 	unencryptTransportKwd     = "disable-transport-encryption"
-	unrestrictedApiAccessKwd  = "unrestricted-api"
+	unrestrictedAPIAccessKwd  = "unrestricted-api"
 	writableKwd               = "writable"
 	enablePubSubKwd           = "enable-pubsub-experiment"
 	enableIPNSPubSubKwd       = "enable-namesys-pubsub"
@@ -89,7 +92,7 @@ For example, to change the 'Gateway' port:
 
   ipfs config Addresses.Gateway /ip4/127.0.0.1/tcp/8082
 
-The API address can be changed the same way:
+The RPC API address can be changed the same way:
 
   ipfs config Addresses.API /ip4/127.0.0.1/tcp/5002
 
@@ -100,14 +103,14 @@ other computers in the network, use 0.0.0.0 as the ip address:
 
   ipfs config Addresses.Gateway /ip4/0.0.0.0/tcp/8080
 
-Be careful if you expose the API. It is a security risk, as anyone could
+Be careful if you expose the RPC API. It is a security risk, as anyone could
 control your node remotely. If you need to control the node remotely,
 make sure to protect the port as you would other services or database
 (firewall, authenticated proxy, etc).
 
 HTTP Headers
 
-ipfs supports passing arbitrary headers to the API and Gateway. You can
+ipfs supports passing arbitrary headers to the RPC API and Gateway. You can
 do this by setting headers on the API.HTTPHeaders and Gateway.HTTPHeaders
 keys:
 
@@ -141,17 +144,6 @@ environment variable:
 
   export IPFS_PATH=/path/to/ipfsrepo
 
-Routing
-
-IPFS by default will use a DHT for content routing. There is a highly
-experimental alternative that operates the DHT in a 'client only' mode that
-can be enabled by running the daemon as:
-
-  ipfs daemon --routing=dhtclient
-
-This will later be transitioned into a config option once it gets out of the
-'experimental' stage.
-
 DEPRECATION NOTICE
 
 Previously, ipfs used an environment variable as seen below:
@@ -170,10 +162,10 @@ Headers.
 		cmds.StringOption(initProfileOptionKwd, "Configuration profiles to apply for --init. See ipfs init --help for more"),
 		cmds.StringOption(routingOptionKwd, "Overrides the routing option").WithDefault(routingOptionDefaultKwd),
 		cmds.BoolOption(mountKwd, "Mounts IPFS to the filesystem using FUSE (experimental)"),
-		cmds.BoolOption(writableKwd, "Enable writing objects (with POST, PUT and DELETE)"),
+		cmds.BoolOption(writableKwd, "Enable legacy Gateway.Writable (deprecated)"),
 		cmds.StringOption(ipfsMountKwd, "Path to the mountpoint for IPFS (if using --mount). Defaults to config setting."),
 		cmds.StringOption(ipnsMountKwd, "Path to the mountpoint for IPNS (if using --mount). Defaults to config setting."),
-		cmds.BoolOption(unrestrictedApiAccessKwd, "Allow API access to unlisted hashes"),
+		cmds.BoolOption(unrestrictedAPIAccessKwd, "Allow API access to unlisted hashes"),
 		cmds.BoolOption(unencryptTransportKwd, "Disable transport encryption (for debugging protocols)"),
 		cmds.BoolOption(enableGCKwd, "Enable automatic periodic repo garbage collection"),
 		cmds.BoolOption(adjustFDLimitKwd, "Check and raise file descriptor limits if needed").WithDefault(true),
@@ -293,7 +285,7 @@ func daemonFunc(req *cmds.Request, re cmds.ResponseEmitter, env cmds.Environment
 
 		if !domigrate {
 			fmt.Println("Not running migrations of fs-repo now.")
-			fmt.Println("Please get fs-repo-migrations from https://dist.ipfs.io")
+			fmt.Println("Please get fs-repo-migrations from https://dist.ipfs.tech")
 			return fmt.Errorf("fs-repo requires migration")
 		}
 
@@ -331,7 +323,7 @@ func daemonFunc(req *cmds.Request, re cmds.ResponseEmitter, env cmds.Environment
 
 		if cacheMigrations || pinMigrations {
 			// Create temp directory to store downloaded migration archives
-			migrations.DownloadDirectory, err = ioutil.TempDir("", "migrations")
+			migrations.DownloadDirectory, err = os.MkdirTemp("", "migrations")
 			if err != nil {
 				return err
 			}
@@ -401,14 +393,30 @@ func daemonFunc(req *cmds.Request, re cmds.ResponseEmitter, env cmds.Environment
 
 	routingOption, _ := req.Options[routingOptionKwd].(string)
 	if routingOption == routingOptionDefaultKwd {
-		routingOption = cfg.Routing.Type
+		routingOption = cfg.Routing.Type.WithDefault(routingOptionAutoKwd)
 		if routingOption == "" {
+			routingOption = routingOptionAutoKwd
+		}
+	}
+
+	// Private setups can't leverage peers returned by default IPNIs (Routing.Type=auto)
+	// To avoid breaking existing setups, switch them to DHT-only.
+	if routingOption == routingOptionAutoKwd {
+		if key, _ := repo.SwarmKey(); key != nil || pnet.ForcePrivateNetwork {
+			log.Error("Private networking (swarm.key / LIBP2P_FORCE_PNET) does not work with public HTTP IPNIs enabled by Routing.Type=auto. Kubo will use Routing.Type=dht instead. Update config to remove this message.")
 			routingOption = routingOptionDHTKwd
 		}
 	}
+
 	switch routingOption {
 	case routingOptionSupernodeKwd:
 		return errors.New("supernode routing was never fully implemented and has been removed")
+	case routingOptionDefaultKwd, routingOptionAutoKwd:
+		ncfg.Routing = libp2p.ConstructDefaultRouting(
+			cfg.Identity.PeerID,
+			cfg.Addresses.Swarm,
+			cfg.Identity.PrivKey,
+		)
 	case routingOptionDHTClientKwd:
 		ncfg.Routing = libp2p.DHTClientOption
 	case routingOptionDHTKwd:
@@ -417,6 +425,14 @@ func daemonFunc(req *cmds.Request, re cmds.ResponseEmitter, env cmds.Environment
 		ncfg.Routing = libp2p.DHTServerOption
 	case routingOptionNoneKwd:
 		ncfg.Routing = libp2p.NilRouterOption
+	case routingOptionCustomKwd:
+		ncfg.Routing = libp2p.ConstructDelegatedRouting(
+			cfg.Routing.Routers,
+			cfg.Routing.Methods,
+			cfg.Identity.PeerID,
+			cfg.Addresses.Swarm,
+			cfg.Identity.PrivKey,
+		)
 	default:
 		return fmt.Errorf("unrecognized routing option: %s", routingOption)
 	}
@@ -437,7 +453,28 @@ func daemonFunc(req *cmds.Request, re cmds.ResponseEmitter, env cmds.Environment
 		fmt.Printf("Swarm key fingerprint: %x\n", node.PNetFingerprint)
 	}
 
+	if (pnet.ForcePrivateNetwork || node.PNetFingerprint != nil) && routingOption == routingOptionAutoKwd {
+		// This should never happen, but better safe than sorry
+		log.Fatal("Private network does not work with Routing.Type=auto. Update your config to Routing.Type=dht (or none, and do manual peering)")
+	}
+
 	printSwarmAddrs(node)
+
+	if node.PrivateKey.Type() == p2pcrypto.RSA {
+		fmt.Print(`
+Warning: You are using an RSA Peer ID, which was replaced by Ed25519
+as the default recommended in Kubo since September 2020. Signing with
+RSA Peer IDs is more CPU-intensive than with other key types.
+It is recommended that you change your public key type to ed25519
+by using the following command:
+
+  ipfs key rotate -o rsa-key-backup -t ed25519
+
+After changing your key type, restart your node for the changes to
+take effect.
+
+`)
+	}
 
 	defer func() {
 		// We wait for the node to close first, as the node has children
@@ -524,6 +561,7 @@ func daemonFunc(req *cmds.Request, re cmds.ResponseEmitter, env cmds.Environment
 		"commit":  version.CurrentCommit,
 	}).Set(1)
 
+	// TODO(9285): make metrics more configurable
 	// initialize metrics collector
 	prometheus.MustRegister(&corehttp.IpfsNodeCollector{Node: node})
 
@@ -644,7 +682,7 @@ func serveHTTPApi(req *cmds.Request, cctx *oldcmds.Context) (<-chan error, error
 	// because this would open up the api to scripting vulnerabilities.
 	// only the webui objects are allowed.
 	// if you know what you're doing, go ahead and pass --unrestricted-api.
-	unrestricted, _ := req.Options[unrestrictedApiAccessKwd].(bool)
+	unrestricted, _ := req.Options[unrestrictedAPIAccessKwd].(bool)
 	gatewayOpt := corehttp.GatewayOption(false, corehttp.WebUIPaths...)
 	if unrestricted {
 		gatewayOpt = corehttp.GatewayOption(true, "/ipfs", "/ipns")
@@ -653,6 +691,7 @@ func serveHTTPApi(req *cmds.Request, cctx *oldcmds.Context) (<-chan error, error
 	var opts = []corehttp.ServeOption{
 		corehttp.MetricsCollectionOption("api"),
 		corehttp.MetricsOpenCensusCollectionOption(),
+		corehttp.MetricsOpenCensusDefaultPrometheusRegistry(),
 		corehttp.CheckVersionOption(),
 		corehttp.CommandsOption(*cctx),
 		corehttp.WebUIOption,
@@ -676,8 +715,8 @@ func serveHTTPApi(req *cmds.Request, cctx *oldcmds.Context) (<-chan error, error
 		return nil, fmt.Errorf("serveHTTPApi: ConstructNode() failed: %s", err)
 	}
 
-	if err := node.Repo.SetAPIAddr(listeners[0].Multiaddr()); err != nil {
-		return nil, fmt.Errorf("serveHTTPApi: SetAPIAddr() failed: %s", err)
+	if err := node.Repo.SetAPIAddr(rewriteMaddrToUseLocalhostIfItsAny(listeners[0].Multiaddr())); err != nil {
+		return nil, fmt.Errorf("serveHTTPApi: SetAPIAddr() failed: %w", err)
 	}
 
 	errc := make(chan error)
@@ -698,6 +737,19 @@ func serveHTTPApi(req *cmds.Request, cctx *oldcmds.Context) (<-chan error, error
 	return errc, nil
 }
 
+func rewriteMaddrToUseLocalhostIfItsAny(maddr ma.Multiaddr) ma.Multiaddr {
+	first, rest := ma.SplitFirst(maddr)
+
+	switch {
+	case first.Equal(manet.IP4Unspecified):
+		return manet.IP4Loopback.Encapsulate(rest)
+	case first.Equal(manet.IP6Unspecified):
+		return manet.IP6Loopback.Encapsulate(rest)
+	default:
+		return maddr // not ip
+	}
+}
+
 // printSwarmAddrs prints the addresses of the host
 func printSwarmAddrs(node *core.IpfsNode) {
 	if !node.IsOnline {
@@ -705,22 +757,23 @@ func printSwarmAddrs(node *core.IpfsNode) {
 		return
 	}
 
-	var lisAddrs []string
 	ifaceAddrs, err := node.PeerHost.Network().InterfaceListenAddresses()
 	if err != nil {
 		log.Errorf("failed to read listening addresses: %s", err)
 	}
-	for _, addr := range ifaceAddrs {
-		lisAddrs = append(lisAddrs, addr.String())
+	lisAddrs := make([]string, len(ifaceAddrs))
+	for i, addr := range ifaceAddrs {
+		lisAddrs[i] = addr.String()
 	}
 	sort.Strings(lisAddrs)
 	for _, addr := range lisAddrs {
 		fmt.Printf("Swarm listening on %s\n", addr)
 	}
 
-	var addrs []string
-	for _, addr := range node.PeerHost.Addrs() {
-		addrs = append(addrs, addr.String())
+	nodePhostAddrs := node.PeerHost.Addrs()
+	addrs := make([]string, len(nodePhostAddrs))
+	for i, addr := range nodePhostAddrs {
+		addrs[i] = addr.String()
 	}
 	sort.Strings(addrs)
 	for _, addr := range addrs {
@@ -738,7 +791,11 @@ func serveHTTPGateway(req *cmds.Request, cctx *oldcmds.Context) (<-chan error, e
 
 	writable, writableOptionFound := req.Options[writableKwd].(bool)
 	if !writableOptionFound {
-		writable = cfg.Gateway.Writable
+		writable = cfg.Gateway.Writable.WithDefault(false)
+	}
+
+	if writable {
+		log.Error("serveHTTPGateway: legacy Gateway.Writable is DEPRECATED and will be removed or changed in future versions. If you are still using this, provide feedback in https://github.com/ipfs/specs/issues/375")
 	}
 
 	listeners, err := sockets.TakeListeners("io.ipfs.gateway")
@@ -801,12 +858,22 @@ func serveHTTPGateway(req *cmds.Request, cctx *oldcmds.Context) (<-chan error, e
 	}
 
 	if len(cfg.Gateway.PathPrefixes) > 0 {
-		log.Error("Support for X-Ipfs-Gateway-Prefix and Gateway.PathPrefixes is deprecated and will be removed in the next release. Please comment on the issue if you're using this feature: https://github.com/ipfs/go-ipfs/issues/7702")
+		log.Fatal("Support for custom Gateway.PathPrefixes was removed: https://github.com/ipfs/go-ipfs/issues/7702")
 	}
 
 	node, err := cctx.ConstructNode()
 	if err != nil {
 		return nil, fmt.Errorf("serveHTTPGateway: ConstructNode() failed: %s", err)
+	}
+
+	if len(listeners) > 0 {
+		addr, err := manet.ToNetAddr(rewriteMaddrToUseLocalhostIfItsAny(listeners[0].Multiaddr()))
+		if err != nil {
+			return nil, fmt.Errorf("serveHTTPGateway: manet.ToIP() failed: %w", err)
+		}
+		if err := node.Repo.SetGatewayAddr(addr); err != nil {
+			return nil, fmt.Errorf("serveHTTPGateway: SetGatewayAddr() failed: %w", err)
+		}
 	}
 
 	errc := make(chan error)
@@ -827,7 +894,7 @@ func serveHTTPGateway(req *cmds.Request, cctx *oldcmds.Context) (<-chan error, e
 	return errc, nil
 }
 
-//collects options and opens the fuse mountpoint
+// collects options and opens the fuse mountpoint
 func mountFuse(req *cmds.Request, cctx *oldcmds.Context) error {
 	cfg, err := cctx.GetConfig()
 	if err != nil {
@@ -926,7 +993,7 @@ func printVersion() {
 	if version.CurrentCommit != "" {
 		v += "-" + version.CurrentCommit
 	}
-	fmt.Printf("go-ipfs version: %s\n", v)
+	fmt.Printf("Kubo version: %s\n", v)
 	fmt.Printf("Repo version: %d\n", fsrepo.RepoVersion)
 	fmt.Printf("System version: %s\n", runtime.GOARCH+"/"+runtime.GOOS)
 	fmt.Printf("Golang version: %s\n", runtime.Version())

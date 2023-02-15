@@ -6,10 +6,10 @@ import (
 	"strings"
 
 	cmds "github.com/ipfs/go-ipfs-cmds"
-	"github.com/ipfs/go-ipfs/core/commands/cmdenv"
-	ke "github.com/ipfs/go-ipfs/core/commands/keyencode"
-	"github.com/libp2p/go-libp2p-core/peer"
+	"github.com/ipfs/kubo/core/commands/cmdenv"
+	ke "github.com/ipfs/kubo/core/commands/keyencode"
 	record "github.com/libp2p/go-libp2p-record"
+	"github.com/libp2p/go-libp2p/core/peer"
 )
 
 type ipnsPubsubState struct {
@@ -100,7 +100,7 @@ var ipnspsSubsCmd = &cmds.Command{
 				// Not necessarily an error.
 				continue
 			}
-			pid, err := peer.IDFromString(k)
+			pid, err := peer.IDFromBytes([]byte(k))
 			if err != nil {
 				log.Errorf("ipns key not a valid peer ID: %s", err)
 				continue

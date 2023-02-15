@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"path"
 	"strings"
@@ -17,7 +16,7 @@ const (
 )
 
 // HttpFetcher fetches files over HTTP
-type HttpFetcher struct {
+type HttpFetcher struct { //nolint
 	distPath  string
 	gateway   string
 	limit     int64
@@ -31,7 +30,7 @@ var _ Fetcher = (*HttpFetcher)(nil)
 // Specifying "" for distPath sets the default IPNS path.
 // Specifying "" for gateway sets the default.
 // Specifying 0 for fetchLimit sets the default, -1 means no limit.
-func NewHttpFetcher(distPath, gateway, userAgent string, fetchLimit int64) *HttpFetcher {
+func NewHttpFetcher(distPath, gateway, userAgent string, fetchLimit int64) *HttpFetcher { //nolint
 	f := &HttpFetcher{
 		distPath: LatestIpfsDist,
 		gateway:  defaultGatewayURL,
@@ -81,7 +80,7 @@ func (f *HttpFetcher) Fetch(ctx context.Context, filePath string) ([]byte, error
 
 	if resp.StatusCode >= 400 {
 		defer resp.Body.Close()
-		mes, err := ioutil.ReadAll(resp.Body)
+		mes, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return nil, fmt.Errorf("error reading error body: %s", err)
 		}
@@ -96,7 +95,7 @@ func (f *HttpFetcher) Fetch(ctx context.Context, filePath string) ([]byte, error
 	}
 	defer rc.Close()
 
-	return ioutil.ReadAll(rc)
+	return io.ReadAll(rc)
 }
 
 func (f *HttpFetcher) Close() error {

@@ -12,18 +12,18 @@ import (
 	"github.com/testground/sdk-go/runtime"
 	"github.com/testground/sdk-go/sync"
 
-	bitswap "github.com/ipfs/go-bitswap"
-	bsnet "github.com/ipfs/go-bitswap/network"
-	block "github.com/ipfs/go-block-format"
+	bitswap "github.com/ipfs/go-libipfs/bitswap"
+	bsnet "github.com/ipfs/go-libipfs/bitswap/network"
+	block "github.com/ipfs/go-libipfs/blocks"
 	"github.com/ipfs/go-cid"
 	datastore "github.com/ipfs/go-datastore"
 	blockstore "github.com/ipfs/go-ipfs-blockstore"
 	exchange "github.com/ipfs/go-ipfs-exchange-interface"
 	bstats "github.com/ipfs/go-ipfs-regression/bitswap"
 	"github.com/libp2p/go-libp2p"
-	"github.com/libp2p/go-libp2p-core/host"
-	"github.com/libp2p/go-libp2p-core/peer"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
+	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/multiformats/go-multihash"
 )
@@ -73,10 +73,11 @@ func runSpeedTest(runenv *runtime.RunEnv, initCtx *run.InitContext) error {
 	if err != nil {
 		return err
 	}
-	h, err := libp2p.New(ctx, libp2p.ListenAddrs(listen))
+	h, err := libp2p.New(libp2p.ListenAddrs(listen))
 	if err != nil {
 		return err
 	}
+	defer h.Close()
 	kad, err := dht.New(ctx, h)
 	if err != nil {
 		return err
@@ -116,11 +117,7 @@ func runProvide(ctx context.Context, runenv *runtime.RunEnv, h host.Host, bstore
 		buf := make([]byte, size)
 		rand.Read(buf)
 		blk := block.NewBlock(buf)
-		err := bstore.Put(blk)
-		if err != nil {
-			return err
-		}
-		err = ex.HasBlock(blk)
+		err := bstore.Put(ctx, blk)
 		if err != nil {
 			return err
 		}
@@ -183,7 +180,7 @@ func runRequest(ctx context.Context, runenv *runtime.RunEnv, h host.Host, bstore
 		}
 		runenv.RecordMessage(bstats.Marshal(s))
 
-		stored, err := bstore.Has(blk.Cid())
+		stored, err := bstore.Has(ctx, blk.Cid())
 		if err != nil {
 			return fmt.Errorf("error checking if blck was stored %s: %w", mh.String(), err)
 		}

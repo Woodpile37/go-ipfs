@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	net "github.com/libp2p/go-libp2p-core/network"
-	protocol "github.com/libp2p/go-libp2p-core/protocol"
+	net "github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/protocol"
 	ma "github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
 )
@@ -101,6 +101,6 @@ func (l *remoteListener) TargetAddress() ma.Multiaddr {
 
 func (l *remoteListener) close() {}
 
-func (l *remoteListener) key() string {
-	return string(l.proto)
+func (l *remoteListener) key() protocol.ID {
+	return l.proto
 }

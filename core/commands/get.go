@@ -11,14 +11,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ipfs/go-ipfs/core/commands/cmdenv"
-	"github.com/ipfs/go-ipfs/core/commands/e"
+	"github.com/ipfs/kubo/core/commands/cmdenv"
+	"github.com/ipfs/kubo/core/commands/e"
 
 	"github.com/cheggaaa/pb"
 	cmds "github.com/ipfs/go-ipfs-cmds"
-	files "github.com/ipfs/go-ipfs-files"
+	"github.com/ipfs/go-libipfs/files"
+	"github.com/ipfs/go-libipfs/tar"
 	"github.com/ipfs/interface-go-ipfs-core/path"
-	"github.com/ipfs/tar-utils"
 )
 
 var ErrInvalidCompressionLevel = errors.New("compression level must be between 1 and 9")

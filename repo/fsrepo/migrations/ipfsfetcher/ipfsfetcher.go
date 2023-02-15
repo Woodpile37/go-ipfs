@@ -5,31 +5,30 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/url"
 	"os"
 	"path"
 	"strings"
 	"sync"
 
-	files "github.com/ipfs/go-ipfs-files"
-	"github.com/ipfs/go-ipfs/config"
-	"github.com/ipfs/go-ipfs/core"
-	"github.com/ipfs/go-ipfs/core/coreapi"
-	"github.com/ipfs/go-ipfs/core/node/libp2p"
-	"github.com/ipfs/go-ipfs/repo/fsrepo"
-	"github.com/ipfs/go-ipfs/repo/fsrepo/migrations"
+	"github.com/ipfs/go-libipfs/files"
 	iface "github.com/ipfs/interface-go-ipfs-core"
 	"github.com/ipfs/interface-go-ipfs-core/options"
 	ipath "github.com/ipfs/interface-go-ipfs-core/path"
-	peer "github.com/libp2p/go-libp2p-core/peer"
+	"github.com/ipfs/kubo/config"
+	"github.com/ipfs/kubo/core"
+	"github.com/ipfs/kubo/core/coreapi"
+	"github.com/ipfs/kubo/core/node/libp2p"
+	"github.com/ipfs/kubo/repo/fsrepo"
+	"github.com/ipfs/kubo/repo/fsrepo/migrations"
+	peer "github.com/libp2p/go-libp2p/core/peer"
 )
 
 const (
 	// Default maximum download size
 	defaultFetchLimit = 1024 * 1024 * 512
 
-	tempNodeTcpAddr = "/ip4/127.0.0.1/tcp/0"
+	tempNodeTCPAddr = "/ip4/127.0.0.1/tcp/0"
 )
 
 type IpfsFetcher struct {
@@ -134,7 +133,7 @@ func (f *IpfsFetcher) Fetch(ctx context.Context, filePath string) ([]byte, error
 	}
 	defer rc.Close()
 
-	return ioutil.ReadAll(rc)
+	return io.ReadAll(rc)
 }
 
 func (f *IpfsFetcher) Close() error {
@@ -171,7 +170,7 @@ func (f *IpfsFetcher) recordFetched(fetchedPath ipath.Path) {
 }
 
 func initTempNode(ctx context.Context, bootstrap []string, peers []peer.AddrInfo) (string, error) {
-	identity, err := config.CreateIdentity(ioutil.Discard, []options.KeyGenerateOption{
+	identity, err := config.CreateIdentity(io.Discard, []options.KeyGenerateOption{
 		options.Key.Type(options.Ed25519Key),
 	})
 	if err != nil {
@@ -183,18 +182,18 @@ func initTempNode(ctx context.Context, bootstrap []string, peers []peer.AddrInfo
 	}
 
 	// create temporary ipfs directory
-	dir, err := ioutil.TempDir("", "ipfs-temp")
+	dir, err := os.MkdirTemp("", "ipfs-temp")
 	if err != nil {
 		return "", fmt.Errorf("failed to get temp dir: %s", err)
 	}
 
 	// configure the temporary node
-	cfg.Routing.Type = "dhtclient"
+	cfg.Routing.Type = config.NewOptionalString("dhtclient")
 
 	// Disable listening for inbound connections
 	cfg.Addresses.Gateway = []string{}
 	cfg.Addresses.API = []string{}
-	cfg.Addresses.Swarm = []string{tempNodeTcpAddr}
+	cfg.Addresses.Swarm = []string{tempNodeTCPAddr}
 
 	if len(bootstrap) != 0 {
 		cfg.Bootstrap = bootstrap

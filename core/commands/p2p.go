@@ -10,14 +10,14 @@ import (
 	"text/tabwriter"
 	"time"
 
-	core "github.com/ipfs/go-ipfs/core"
-	cmdenv "github.com/ipfs/go-ipfs/core/commands/cmdenv"
-	p2p "github.com/ipfs/go-ipfs/p2p"
+	core "github.com/ipfs/kubo/core"
+	cmdenv "github.com/ipfs/kubo/core/commands/cmdenv"
+	p2p "github.com/ipfs/kubo/p2p"
 
 	cmds "github.com/ipfs/go-ipfs-cmds"
-	peer "github.com/libp2p/go-libp2p-core/peer"
-	pstore "github.com/libp2p/go-libp2p-core/peerstore"
-	protocol "github.com/libp2p/go-libp2p-core/protocol"
+	peer "github.com/libp2p/go-libp2p/core/peer"
+	pstore "github.com/libp2p/go-libp2p/core/peerstore"
+	protocol "github.com/libp2p/go-libp2p/core/protocol"
 	ma "github.com/multiformats/go-multiaddr"
 	madns "github.com/multiformats/go-multiaddr-dns"
 )

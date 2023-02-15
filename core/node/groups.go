@@ -8,16 +8,16 @@ import (
 
 	blockstore "github.com/ipfs/go-ipfs-blockstore"
 	util "github.com/ipfs/go-ipfs-util"
-	"github.com/ipfs/go-ipfs/config"
 	"github.com/ipfs/go-log"
-	"github.com/libp2p/go-libp2p-core/peer"
+	"github.com/ipfs/kubo/config"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
+	"github.com/libp2p/go-libp2p-pubsub/timecache"
+	"github.com/libp2p/go-libp2p/core/peer"
 
-	"github.com/ipfs/go-ipfs/core/node/libp2p"
-	"github.com/ipfs/go-ipfs/p2p"
+	"github.com/ipfs/kubo/core/node/libp2p"
+	"github.com/ipfs/kubo/p2p"
 
 	offline "github.com/ipfs/go-ipfs-exchange-offline"
-	offroute "github.com/ipfs/go-ipfs-routing/offline"
 	uio "github.com/ipfs/go-unixfs/io"
 
 	"github.com/dustin/go-humanize"
@@ -27,7 +27,6 @@ import (
 var logger = log.Logger("core:constructor")
 
 var BaseLibP2P = fx.Options(
-	fx.Provide(libp2p.UserAgent),
 	fx.Provide(libp2p.PNet),
 	fx.Provide(libp2p.ConnectionManager),
 	fx.Provide(libp2p.Host),
@@ -39,33 +38,20 @@ var BaseLibP2P = fx.Options(
 )
 
 func LibP2P(bcfg *BuildCfg, cfg *config.Config) fx.Option {
-	// parse ConnMgr config
+	var connmgr fx.Option
 
-	grace := config.DefaultConnMgrGracePeriod
-	low := config.DefaultConnMgrLowWater
-	high := config.DefaultConnMgrHighWater
-
-	connmgr := fx.Options()
-
-	if cfg.Swarm.ConnMgr.Type != "none" {
-		switch cfg.Swarm.ConnMgr.Type {
-		case "":
-			// 'default' value is the basic connection manager
-			break
-		case "basic":
-			var err error
-			grace, err = time.ParseDuration(cfg.Swarm.ConnMgr.GracePeriod)
-			if err != nil {
-				return fx.Error(fmt.Errorf("parsing Swarm.ConnMgr.GracePeriod: %s", err))
-			}
-
-			low = cfg.Swarm.ConnMgr.LowWater
-			high = cfg.Swarm.ConnMgr.HighWater
-		default:
-			return fx.Error(fmt.Errorf("unrecognized ConnMgr.Type: %q", cfg.Swarm.ConnMgr.Type))
-		}
-
+	// set connmgr based on Swarm.ConnMgr.Type
+	connMgrType := cfg.Swarm.ConnMgr.Type.WithDefault(config.DefaultConnMgrType)
+	switch connMgrType {
+	case "none":
+		connmgr = fx.Options() // noop
+	case "", "basic":
+		grace := cfg.Swarm.ConnMgr.GracePeriod.WithDefault(config.DefaultConnMgrGracePeriod)
+		low := int(cfg.Swarm.ConnMgr.LowWater.WithDefault(config.DefaultConnMgrLowWater))
+		high := int(cfg.Swarm.ConnMgr.HighWater.WithDefault(config.DefaultConnMgrHighWater))
 		connmgr = fx.Provide(libp2p.ConnectionManager(low, high, grace))
+	default:
+		return fx.Error(fmt.Errorf("unrecognized Swarm.ConnMgr.Type: %q", connMgrType))
 	}
 
 	// parse PubSub config
@@ -78,7 +64,20 @@ func LibP2P(bcfg *BuildCfg, cfg *config.Config) fx.Option {
 		pubsubOptions = append(
 			pubsubOptions,
 			pubsub.WithMessageSigning(!cfg.Pubsub.DisableSigning),
+			pubsub.WithSeenMessagesTTL(cfg.Pubsub.SeenMessagesTTL.WithDefault(pubsub.TimeCacheDuration)),
 		)
+
+		var seenMessagesStrategy timecache.Strategy
+		configSeenMessagesStrategy := cfg.Pubsub.SeenMessagesStrategy.WithDefault(config.DefaultSeenMessagesStrategy)
+		switch configSeenMessagesStrategy {
+		case config.LastSeenMessagesStrategy:
+			seenMessagesStrategy = timecache.Strategy_LastSeen
+		case config.FirstSeenMessagesStrategy:
+			seenMessagesStrategy = timecache.Strategy_FirstSeen
+		default:
+			return fx.Error(fmt.Errorf("unsupported Pubsub.SeenMessagesStrategy %q", configSeenMessagesStrategy))
+		}
+		pubsubOptions = append(pubsubOptions, pubsub.WithSeenMessagesStrategy(seenMessagesStrategy))
 
 		switch cfg.Pubsub.Router {
 		case "":
@@ -140,15 +139,15 @@ func LibP2P(bcfg *BuildCfg, cfg *config.Config) fx.Option {
 	if cfg.Swarm.EnableRelayHop {
 		logger.Fatal("The `Swarm.EnableRelayHop` config field was removed.\n" +
 			"Use `Swarm.RelayService` to configure the circuit v2 relay.\n" +
-			"If you want to continue running a circuit v1 relay, please use the standalone relay daemon: https://dist.ipfs.io/#libp2p-relay-daemon (with RelayV1.Enabled: true)")
+			"If you want to continue running a circuit v1 relay, please use the standalone relay daemon: https://dist.ipfs.tech/#libp2p-relay-daemon (with RelayV1.Enabled: true)")
 	}
 
-	peerChan := make(libp2p.AddrInfoChan)
 	// Gather all the options
 	opts := fx.Options(
 		BaseLibP2P,
 
-		fx.Supply(peerChan),
+		// identify's AgentVersion (incl. optional agent-version-suffix)
+		fx.Provide(libp2p.UserAgent()),
 
 		// Services (resource management)
 		fx.Provide(libp2p.ResourceManager(cfg.Swarm)),
@@ -159,20 +158,21 @@ func LibP2P(bcfg *BuildCfg, cfg *config.Config) fx.Option {
 		fx.Provide(libp2p.RelayService(enableRelayService, cfg.Swarm.RelayService)),
 		fx.Provide(libp2p.Transports(cfg.Swarm.Transports)),
 		fx.Invoke(libp2p.StartListening(cfg.Addresses.Swarm)),
-		fx.Invoke(libp2p.SetupDiscovery(cfg.Discovery.MDNS.Enabled, cfg.Discovery.MDNS.Interval)),
+		fx.Invoke(libp2p.SetupDiscovery(cfg.Discovery.MDNS.Enabled)),
 		fx.Provide(libp2p.ForceReachability(cfg.Internal.Libp2pForceReachability)),
 		fx.Provide(libp2p.HolePunching(cfg.Swarm.EnableHolePunching, enableRelayClient)),
 
 		fx.Provide(libp2p.Security(!bcfg.DisableEncryptedConnections, cfg.Swarm.Transports)),
 
 		fx.Provide(libp2p.Routing),
+		fx.Provide(libp2p.ContentRouting),
+
 		fx.Provide(libp2p.BaseRouting(cfg.Experimental.AcceleratedDHTClient)),
 		maybeProvide(libp2p.PubsubRouter, bcfg.getOpt("ipnsps")),
 
 		maybeProvide(libp2p.BandwidthCounter, !cfg.Swarm.DisableBandwidthMetrics),
 		maybeProvide(libp2p.NatPortMap, !cfg.Swarm.DisableNatPortMap),
-		maybeProvide(libp2p.AutoRelay(cfg.Swarm.RelayClient.StaticRelays, peerChan), enableRelayClient),
-		maybeInvoke(libp2p.AutoRelayFeeder(cfg.Peering), enableRelayClient),
+		libp2p.MaybeAutoRelay(cfg.Swarm.RelayClient.StaticRelays, cfg.Peering, enableRelayClient),
 		autonat,
 		connmgr,
 		ps,
@@ -291,7 +291,8 @@ func Online(bcfg *BuildCfg, cfg *config.Config) fx.Option {
 	shouldBitswapProvide := !cfg.Experimental.StrategicProviding
 
 	return fx.Options(
-		fx.Provide(OnlineExchange(cfg, shouldBitswapProvide)),
+		fx.Provide(BitswapOptions(cfg, shouldBitswapProvide)),
+		fx.Provide(OnlineExchange()),
 		maybeProvide(Graphsync, cfg.Experimental.GraphsyncEnabled),
 		fx.Provide(DNSResolver),
 		fx.Provide(Namesys(ipnsCacheSize)),
@@ -303,7 +304,12 @@ func Online(bcfg *BuildCfg, cfg *config.Config) fx.Option {
 		fx.Provide(p2p.New),
 
 		LibP2P(bcfg, cfg),
-		OnlineProviders(cfg.Experimental.StrategicProviding, cfg.Experimental.AcceleratedDHTClient, cfg.Reprovider.Strategy, cfg.Reprovider.Interval),
+		OnlineProviders(
+			cfg.Experimental.StrategicProviding,
+			cfg.Experimental.AcceleratedDHTClient,
+			cfg.Reprovider.Strategy.WithDefault(config.DefaultReproviderStrategy),
+			cfg.Reprovider.Interval.WithDefault(config.DefaultReproviderInterval),
+		),
 	)
 }
 
@@ -313,8 +319,15 @@ func Offline(cfg *config.Config) fx.Option {
 		fx.Provide(offline.Exchange),
 		fx.Provide(DNSResolver),
 		fx.Provide(Namesys(0)),
-		fx.Provide(offroute.NewOfflineRouter),
-		OfflineProviders(cfg.Experimental.StrategicProviding, cfg.Experimental.AcceleratedDHTClient, cfg.Reprovider.Strategy, cfg.Reprovider.Interval),
+		fx.Provide(libp2p.Routing),
+		fx.Provide(libp2p.ContentRouting),
+		fx.Provide(libp2p.OfflineRouting),
+		OfflineProviders(
+			cfg.Experimental.StrategicProviding,
+			cfg.Experimental.AcceleratedDHTClient,
+			cfg.Reprovider.Strategy.WithDefault(config.DefaultReproviderStrategy),
+			cfg.Reprovider.Interval.WithDefault(config.DefaultReproviderInterval),
+		),
 	)
 }
 

@@ -1,14 +1,14 @@
-# The go-ipfs config file
+# The Kubo config file
 
-The go-ipfs config file is a JSON document located at `$IPFS_PATH/config`. It
+The Kubo (go-ipfs) config file is a JSON document located at `$IPFS_PATH/config`. It
 is read once at node instantiation, either for an offline command, or when
 starting the daemon. Commands that execute on a running daemon do not read the
 config file at runtime.
 
-## Table of Contents
+# Table of Contents
 
-- [The go-ipfs config file](#the-go-ipfs-config-file)
-  - [Table of Contents](#table-of-contents)
+- [The Kubo config file](#the-kubo-config-file)
+- [Table of Contents](#table-of-contents)
   - [Profiles](#profiles)
   - [Types](#types)
     - [`flag`](#flag)
@@ -46,6 +46,7 @@ config file at runtime.
     - [`Discovery.MDNS`](#discoverymdns)
       - [`Discovery.MDNS.Enabled`](#discoverymdnsenabled)
       - [`Discovery.MDNS.Interval`](#discoverymdnsinterval)
+  - [`Experimental`](#experimental)
   - [`Gateway`](#gateway)
     - [`Gateway.NoFetch`](#gatewaynofetch)
     - [`Gateway.NoDNSLink`](#gatewaynodnslink)
@@ -58,6 +59,7 @@ config file at runtime.
       - [`Gateway.PublicGateways: Paths`](#gatewaypublicgateways-paths)
       - [`Gateway.PublicGateways: UseSubdomains`](#gatewaypublicgateways-usesubdomains)
       - [`Gateway.PublicGateways: NoDNSLink`](#gatewaypublicgateways-nodnslink)
+      - [`Gateway.PublicGateways: InlineDNSLink`](#gatewaypublicgateways-inlinednslink)
       - [Implicit defaults of `Gateway.PublicGateways`](#implicit-defaults-of-gatewaypublicgateways)
     - [`Gateway` recipes](#gateway-recipes)
   - [`Identity`](#identity)
@@ -69,6 +71,7 @@ config file at runtime.
       - [`Internal.Bitswap.EngineBlockstoreWorkerCount`](#internalbitswapengineblockstoreworkercount)
       - [`Internal.Bitswap.EngineTaskWorkerCount`](#internalbitswapenginetaskworkercount)
       - [`Internal.Bitswap.MaxOutstandingBytesPerPeer`](#internalbitswapmaxoutstandingbytesperpeer)
+    - [`Internal.Bitswap.ProviderSearchDelay`](#internalbitswapprovidersearchdelay)
     - [`Internal.UnixFSShardingSizeThreshold`](#internalunixfsshardingsizethreshold)
   - [`Ipns`](#ipns)
     - [`Ipns.RepublishPeriod`](#ipnsrepublishperiod)
@@ -96,6 +99,8 @@ config file at runtime.
     - [`Pubsub.Enabled`](#pubsubenabled)
     - [`Pubsub.Router`](#pubsubrouter)
     - [`Pubsub.DisableSigning`](#pubsubdisablesigning)
+    - [`Pubsub.SeenMessagesTTL`](#pubsubseenmessagesttl)
+    - [`Pubsub.SeenMessagesStrategy`](#pubsubseenmessagesstrategy)
   - [`Peering`](#peering)
     - [`Peering.Peers`](#peeringpeers)
   - [`Reprovider`](#reprovider)
@@ -103,18 +108,24 @@ config file at runtime.
     - [`Reprovider.Strategy`](#reproviderstrategy)
   - [`Routing`](#routing)
     - [`Routing.Type`](#routingtype)
+    - [`Routing.Routers`](#routingrouters)
+      - [`Routing.Routers: Type`](#routingrouters-type)
+      - [`Routing.Routers: Parameters`](#routingrouters-parameters)
+    - [`Routing: Methods`](#routing-methods)
   - [`Swarm`](#swarm)
     - [`Swarm.AddrFilters`](#swarmaddrfilters)
     - [`Swarm.DisableBandwidthMetrics`](#swarmdisablebandwidthmetrics)
     - [`Swarm.DisableNatPortMap`](#swarmdisablenatportmap)
     - [`Swarm.EnableHolePunching`](#swarmenableholepunching)
+    - [`Swarm.EnableAutoRelay`](#swarmenableautorelay)
     - [`Swarm.RelayClient`](#swarmrelayclient)
       - [`Swarm.RelayClient.Enabled`](#swarmrelayclientenabled)
       - [`Swarm.RelayClient.StaticRelays`](#swarmrelayclientstaticrelays)
     - [`Swarm.RelayService`](#swarmrelayservice)
       - [`Swarm.RelayService.Enabled`](#swarmrelayserviceenabled)
-      - [`Swarm.RelayService.ConnectionDurationLimit`](#swarmrelayserviceconnectiondurationlimit)
-      - [`Swarm.RelayService.ConnectionDataLimit`](#swarmrelayserviceconnectiondatalimit)
+      - [`Swarm.RelayService.Limit`](#swarmrelayservicelimit)
+        - [`Swarm.RelayService.ConnectionDurationLimit`](#swarmrelayserviceconnectiondurationlimit)
+        - [`Swarm.RelayService.ConnectionDataLimit`](#swarmrelayserviceconnectiondatalimit)
       - [`Swarm.RelayService.ReservationTTL`](#swarmrelayservicereservationttl)
       - [`Swarm.RelayService.MaxReservations`](#swarmrelayservicemaxreservations)
       - [`Swarm.RelayService.MaxCircuits`](#swarmrelayservicemaxcircuits)
@@ -122,6 +133,8 @@ config file at runtime.
       - [`Swarm.RelayService.MaxReservationsPerPeer`](#swarmrelayservicemaxreservationsperpeer)
       - [`Swarm.RelayService.MaxReservationsPerIP`](#swarmrelayservicemaxreservationsperip)
       - [`Swarm.RelayService.MaxReservationsPerASN`](#swarmrelayservicemaxreservationsperasn)
+    - [`Swarm.EnableRelayHop`](#swarmenablerelayhop)
+    - [`Swarm.DisableRelay`](#swarmdisablerelay)
     - [`Swarm.EnableAutoNATService`](#swarmenableautonatservice)
     - [`Swarm.ConnMgr`](#swarmconnmgr)
       - [`Swarm.ConnMgr.Type`](#swarmconnmgrtype)
@@ -131,13 +144,17 @@ config file at runtime.
         - [`Swarm.ConnMgr.GracePeriod`](#swarmconnmgrgraceperiod)
     - [`Swarm.ResourceMgr`](#swarmresourcemgr)
       - [`Swarm.ResourceMgr.Enabled`](#swarmresourcemgrenabled)
+      - [`Swarm.ResourceMgr.MaxMemory`](#swarmresourcemgrmaxmemory)
+      - [`Swarm.ResourceMgr.MaxFileDescriptors`](#swarmresourcemgrmaxfiledescriptors)
       - [`Swarm.ResourceMgr.Limits`](#swarmresourcemgrlimits)
+      - [`Swarm.ResourceMgr.Allowlist`](#swarmresourcemgrallowlist)
     - [`Swarm.Transports`](#swarmtransports)
     - [`Swarm.Transports.Network`](#swarmtransportsnetwork)
       - [`Swarm.Transports.Network.TCP`](#swarmtransportsnetworktcp)
       - [`Swarm.Transports.Network.Websocket`](#swarmtransportsnetworkwebsocket)
       - [`Swarm.Transports.Network.QUIC`](#swarmtransportsnetworkquic)
       - [`Swarm.Transports.Network.Relay`](#swarmtransportsnetworkrelay)
+      - [`Swarm.Transports.Network.WebTransport`](#swarmtransportsnetworkwebtransport)
     - [`Swarm.Transports.Security`](#swarmtransportssecurity)
       - [`Swarm.Transports.Security.TLS`](#swarmtransportssecuritytls)
       - [`Swarm.Transports.Security.SECIO`](#swarmtransportssecuritysecio)
@@ -148,8 +165,6 @@ config file at runtime.
   - [`DNS`](#dns)
     - [`DNS.Resolvers`](#dnsresolvers)
     - [`DNS.MaxCacheTTL`](#dnsmaxcachettl)
-
-
 
 ## Profiles
 
@@ -197,7 +212,7 @@ documented in `ipfs config profile --help`.
 
   Configures the node to use the flatfs datastore. Flatfs is the default datastore.
 
-  This is the most battle-tested and reliable datastore. 
+  This is the most battle-tested and reliable datastore.
   You should use this datastore if:
 
   - You need a very simple and very reliable datastore, and you trust your
@@ -215,9 +230,9 @@ documented in `ipfs config profile --help`.
 
   Configures the node to use the experimental badger datastore. Keep in mind that this **uses an outdated badger 1.x**.
 
-  Use this datastore if some aspects of performance, 
+  Use this datastore if some aspects of performance,
   especially the speed of adding many gigabytes of files, are critical. However, be aware that:
-  
+
   - This datastore will not properly reclaim space when your datastore is
     smaller than several gigabytes. If you run IPFS with `--enable-gc`, you plan on storing very little data in
     your IPFS node, and disk usage is more critical than performance, consider using
@@ -230,9 +245,15 @@ documented in `ipfs config profile --help`.
 
 - `lowpower`
 
-  Reduces daemon overhead on the system. May affect node
+  Reduces daemon overhead on the system. Affects node
   functionality - performance of content discovery and data
-  fetching may be degraded.
+  fetching may be degraded. Local data won't be announced on routing systems like DHT.
+
+  - `Swarm.ConnMgr` set to maintain minimum number of p2p connections at a time.
+  - Disables [`Reprovider`](#reprovider) service → no CID will be announced on DHT and other routing systems(!)
+  - Disables AutoNAT.
+
+  Use this profile with caution.
 
 ## Types
 
@@ -243,7 +264,7 @@ This document refers to the standard JSON types (e.g., `null`, `string`,
 
 Flags allow enabling and disabling features. However, unlike simple booleans,
 they can also be `null` (or omitted) to indicate that the default value should
-be chosen. This makes it easier for go-ipfs to change the defaults in the
+be chosen. This makes it easier for Kubo to change the defaults in the
 future unless the user _explicitly_ sets the flag to either `true` (enabled) or
 `false` (disabled). Flags have three possible states:
 
@@ -279,7 +300,7 @@ does (e.g, `"1d2h4m40.01s"`).
 Optional integers allow specifying some numerical value which has
 an implicit default when missing from the config file:
 
-- `null`/missing will apply the default value defined in go-ipfs sources (`.WithDefault(value)`)
+- `null`/missing will apply the default value defined in Kubo sources (`.WithDefault(value)`)
 - an integer between `-2^63` and `2^63-1` (i.e. `-9223372036854775808` to `9223372036854775807`)
 
 ### `optionalBytes`
@@ -287,7 +308,7 @@ an implicit default when missing from the config file:
 Optional Bytes allow specifying some number of bytes which has
 an implicit default when missing from the config file:
 
-- `null`/missing (apply the default value defined in go-ipfs sources)
+- `null`/missing (apply the default value defined in Kubo sources)
 - a string value indicating the number of bytes, including human readable representations:
   - [SI sizes](https://en.wikipedia.org/wiki/Metric_prefix#List_of_SI_prefixes) (metric units, powers of 1000), e.g. `1B`, `2kB`, `3MB`, `4GB`, `5TB`, …)
   - [IEC sizes](https://en.wikipedia.org/wiki/Binary_prefix#IEC_prefixes) (binary units, powers of 1024), e.g. `1B`, `2KiB`, `3MiB`, `4GiB`, `5TiB`, …)
@@ -297,7 +318,7 @@ an implicit default when missing from the config file:
 Optional strings allow specifying some string value which has
 an implicit default when missing from the config file:
 
-- `null`/missing will apply the default value defined in go-ipfs sources (`.WithDefault("value")`)
+- `null`/missing will apply the default value defined in Kubo sources (`.WithDefault("value")`)
 - a string
 
 ### `optionalDuration`
@@ -305,7 +326,7 @@ an implicit default when missing from the config file:
 Optional durations allow specifying some duration value which has
 an implicit default when missing from the config file:
 
-- `null`/missing will apply the default value defined in go-ipfs sources (`.WithDefault("1h2m3s")`)
+- `null`/missing will apply the default value defined in Kubo sources (`.WithDefault("1h2m3s")`)
 - a string with a valid [go duration](#duration)  (e.g, `"1d2h4m40.01s"`).
 
 ## `Addresses`
@@ -349,7 +370,9 @@ Supported Transports:
 
 * tcp/ip{4,6} - `/ipN/.../tcp/...`
 * websocket - `/ipN/.../tcp/.../ws`
-* quic - `/ipN/.../udp/.../quic`
+* quic (Draft-29) - `/ipN/.../udp/.../quic` - can share the same two tuple with `/quic-v1` and `/quic-v1/webtransport`
+* quicv1 (RFC9000) - `/ipN/.../udp/.../quic-v1` - can share the same two tuple with `/quic` and `/quic-v1/webtransport`
+* webtransport `/ipN/.../udp/.../quic-v1/webtransport` - can share the same two tuple with `/quic` and `/quic-v1`
 
 Default:
 ```json
@@ -357,7 +380,11 @@ Default:
   "/ip4/0.0.0.0/tcp/4001",
   "/ip6/::/tcp/4001",
   "/ip4/0.0.0.0/udp/4001/quic",
-  "/ip6/::/udp/4001/quic"
+  "/ip4/0.0.0.0/udp/4001/quic-v1",
+  "/ip4/0.0.0.0/udp/4001/quic-v1/webtransport",
+  "/ip6/::/udp/4001/quic",
+  "/ip6/::/udp/4001/quic-v1",
+  "/ip6/::/udp/4001/quic-v1/webtransport"
 ]
 ```
 
@@ -429,7 +456,7 @@ Type: `string` (one of `"enabled"` or `"disabled"`)
 ### `AutoNAT.Throttle`
 
 When set, this option configure's the AutoNAT services throttling behavior. By
-default, go-ipfs will rate-limit the number of NAT checks performed for other
+default, Kubo will rate-limit the number of NAT checks performed for other
 nodes to 30 per minute, and 3 per peer.
 
 ### `AutoNAT.Throttle.GlobalLimit`
@@ -574,15 +601,15 @@ Type: `object`
 
 ## `Discovery`
 
-Contains options for configuring ipfs node discovery mechanisms.
+Contains options for configuring IPFS node discovery mechanisms.
 
 ### `Discovery.MDNS`
 
-Options for multicast dns peer discovery.
+Options for [ZeroConf](https://github.com/libp2p/zeroconf#readme) Multicast DNS-SD peer discovery.
 
 #### `Discovery.MDNS.Enabled`
 
-A boolean value for whether or not mdns should be active.
+A boolean value for whether or not Multicast DNS-SD should be active.
 
 Default: `true`
 
@@ -590,11 +617,12 @@ Type: `bool`
 
 #### `Discovery.MDNS.Interval`
 
-The number of seconds between discovery checks.
+**REMOVED:**  this is not configurable any more
+in the [new mDNS implementation](https://github.com/libp2p/zeroconf#readme).
 
-Default: `5`
+## `Experimental`
 
-Type: `integer` (integer seconds, 0 means the default)
+Toggle and configure experimental features of Kubo. Experimental features are listed [here](./experimental-features.md).
 
 ## `Gateway`
 
@@ -650,21 +678,14 @@ Type: `string` (url)
 
 ### `Gateway.FastDirIndexThreshold`
 
-The maximum number of items in a directory before the Gateway switches
-to a shallow, faster listing which only requires the root node.
-
-This allows for fast listings of big directories, without the linear slowdown caused
-by reading size metadata from child nodes.
-
-Setting to 0 will enable fast listings for all directories.
-
-Default: `100`
-
-Type: `optionalInteger`
+**REMOVED**: this option is [no longer necessary](https://github.com/ipfs/kubo/pull/9481). Ignored since  [Kubo 0.18](https://github.com/ipfs/kubo/blob/master/docs/changelogs/v0.18.md).
 
 ### `Gateway.Writable`
 
-A boolean to configure whether the gateway is writeable or not.
+**DEPRECATED**: Enables legacy PUT/POST request handling. 
+
+This API is not standardized, and should not be used for new projects.
+We are working on a modern replacement. IPIP can be tracked in [ipfs/specs#375](https://github.com/ipfs/specs/issues/375).
 
 Default: `false`
 
@@ -672,40 +693,7 @@ Type: `bool`
 
 ### `Gateway.PathPrefixes`
 
-**DEPRECATED:** see [go-ipfs#7702](https://github.com/ipfs/go-ipfs/issues/7702)
-
-<!--
-An array of acceptable url paths that a client can specify in X-Ipfs-Path-Prefix
-header.
-
-The X-Ipfs-Path-Prefix header is used to specify a base path to prepend to links
-in directory listings and for trailing-slash redirects. It is intended to be set
-by a frontend http proxy like nginx.
-
-Example: We mount `blog.ipfs.io` (a dnslink page) at `ipfs.io/blog`.
-
-**.ipfs/config**
-```json
-"Gateway": {
-  "PathPrefixes": ["/blog"],
-}
-```
-
-**nginx_ipfs.conf**
-```nginx
-location /blog/ {
-  rewrite "^/blog(/.*)$" $1 break;
-  proxy_set_header Host blog.ipfs.io;
-  proxy_set_header X-Ipfs-Gateway-Prefix /blog;
-  proxy_pass http://127.0.0.1:8080;
-}
-```
-
--->
-
-Default: `[]`
-
-Type: `array[string]`
+**REMOVED:** see [go-ipfs#7702](https://github.com/ipfs/go-ipfs/issues/7702)
 
 ### `Gateway.PublicGateways`
 
@@ -745,7 +733,7 @@ Type: `array[string]`
 A boolean to configure whether the gateway at the hostname provides [Origin isolation](https://developer.mozilla.org/en-US/docs/Web/Security/Same-origin_policy)
 between content roots.
 
-- `true` - enables [subdomain gateway](#https://docs.ipfs.io/how-to/address-ipfs-on-web/#subdomain-gateway) at `http://*.{hostname}/`
+- `true` - enables [subdomain gateway](https://docs.ipfs.tech/how-to/address-ipfs-on-web/#subdomain-gateway) at `http://*.{hostname}/`
     - **Requires whitelist:** make sure respective `Paths` are set.
       For example, `Paths: ["/ipfs", "/ipns"]` are required for `http://{cid}.ipfs.{hostname}` and `http://{foo}.ipns.{hostname}` to work:
         ```json
@@ -761,7 +749,7 @@ between content roots.
     - **Backward-compatible:** requests for content paths such as `http://{hostname}/ipfs/{cid}` produce redirect to `http://{cid}.ipfs.{hostname}`
     - **API:** if `/api` is on the `Paths` whitelist, `http://{hostname}/api/{cmd}` produces redirect to `http://api.{hostname}/api/{cmd}`
 
-- `false` - enables [path gateway](https://docs.ipfs.io/how-to/address-ipfs-on-web/#path-gateway) at `http://{hostname}/*`
+- `false` - enables [path gateway](https://docs.ipfs.tech/how-to/address-ipfs-on-web/#path-gateway) at `http://{hostname}/*`
   - Example:
     ```json
     "Gateway": {
@@ -787,6 +775,26 @@ If `Paths` are defined, they take priority over DNSLink.
 Default: `false` (DNSLink lookup enabled by default for every defined hostname)
 
 Type: `bool`
+
+#### `Gateway.PublicGateways: InlineDNSLink`
+
+An optional flag to explicitly configure whether subdomain gateway's redirects
+(enabled by `UseSubdomains: true`) should always inline a DNSLink name (FQDN)
+into a single DNS label:
+
+```
+//example.com/ipns/example.net → HTTP 301 → //example-net.ipns.example.com
+```
+
+DNSLink name inlining allows for HTTPS on public subdomain gateways with single
+label wildcard TLS certs (also enabled when passing `X-Forwarded-Proto: https`),
+and provides disjoint Origin per root CID when special rules like
+https://publicsuffix.org, or a custom localhost logic in browsers like Brave
+has to be applied.
+
+Default: `false`
+
+Type: `flag`
 
 #### Implicit defaults of `Gateway.PublicGateways`
 
@@ -818,7 +826,7 @@ $ ipfs config --json Gateway.PublicGateways '{"localhost": null }'
 
 Below is a list of the most common public gateway setups.
 
-* Public [subdomain gateway](https://docs.ipfs.io/how-to/address-ipfs-on-web/#subdomain-gateway) at `http://{cid}.ipfs.dweb.link` (each content root gets its own Origin)
+* Public [subdomain gateway](https://docs.ipfs.tech/how-to/address-ipfs-on-web/#subdomain-gateway) at `http://{cid}.ipfs.dweb.link` (each content root gets its own Origin)
    ```console
    $ ipfs config --json Gateway.PublicGateways '{
        "dweb.link": {
@@ -828,21 +836,21 @@ Below is a list of the most common public gateway setups.
      }'
    ```
    - **Backward-compatible:** this feature enables automatic redirects from content paths to subdomains:
-   
+
      `http://dweb.link/ipfs/{cid}` → `http://{cid}.ipfs.dweb.link`
-     
-   - **X-Forwarded-Proto:** if you run go-ipfs behind a reverse proxy that provides TLS, make it add a `X-Forwarded-Proto: https` HTTP header to ensure users are redirected to `https://`, not `http://`. It will also ensure DNSLink names are inlined to fit in a single DNS label, so they work fine with a wildcart TLS cert ([details](https://github.com/ipfs/in-web-browsers/issues/169)). The NGINX directive is `proxy_set_header X-Forwarded-Proto "https";`.:
-    
+
+   - **X-Forwarded-Proto:** if you run Kubo behind a reverse proxy that provides TLS, make it add a `X-Forwarded-Proto: https` HTTP header to ensure users are redirected to `https://`, not `http://`. It will also ensure DNSLink names are inlined to fit in a single DNS label, so they work fine with a wildcart TLS cert ([details](https://github.com/ipfs/in-web-browsers/issues/169)). The NGINX directive is `proxy_set_header X-Forwarded-Proto "https";`.:
+
      `http://dweb.link/ipfs/{cid}` → `https://{cid}.ipfs.dweb.link`
-     
+
      `http://dweb.link/ipns/your-dnslink.site.example.com` → `https://your--dnslink-site-example-com.ipfs.dweb.link`
-     
+
    - **X-Forwarded-Host:** we also support `X-Forwarded-Host: example.com` if you want to override subdomain gateway host from the original request:
-   
+
      `http://dweb.link/ipfs/{cid}` → `http://{cid}.ipfs.example.com`
 
 
-* Public [path gateway](https://docs.ipfs.io/how-to/address-ipfs-on-web/#path-gateway) at `http://ipfs.io/ipfs/{cid}` (no Origin separation)
+* Public [path gateway](https://docs.ipfs.tech/how-to/address-ipfs-on-web/#path-gateway) at `http://ipfs.io/ipfs/{cid}` (no Origin separation)
    ```console
    $ ipfs config --json Gateway.PublicGateways '{
        "ipfs.io": {
@@ -858,12 +866,12 @@ Below is a list of the most common public gateway setups.
   ```
   * Note that `NoDNSLink: false` is the default (it works out of the box unless set to `true` manually)
 
-* Hardened, site-specific [DNSLink gateway](https://docs.ipfs.io/how-to/address-ipfs-on-web/#dnslink-gateway).
+* Hardened, site-specific [DNSLink gateway](https://docs.ipfs.tech/how-to/address-ipfs-on-web/#dnslink-gateway).
 
   Disable fetching of remote data (`NoFetch: true`) and resolving DNSLink at unknown hostnames (`NoDNSLink: true`).
   Then, enable DNSLink gateway only for the specific hostname (for which data
   is already present on the node), without exposing any content-addressing `Paths`:
-  
+
    ```console
    $ ipfs config --json Gateway.NoFetch true
    $ ipfs config --json Gateway.NoDNSLink true
@@ -893,9 +901,9 @@ Type: `string` (base64 encoded)
 
 ## `Internal`
 
-This section includes internal knobs for various subsystems to allow advanced users with big or private infrastructures to fine-tune some behaviors without the need to recompile go-ipfs.  
+This section includes internal knobs for various subsystems to allow advanced users with big or private infrastructures to fine-tune some behaviors without the need to recompile Kubo.  
 
-**Be aware that making informed change here requires in-depth knowledge and most users should leave these untouched. All knobs listed here are subject to breaking changes between versions.** 
+**Be aware that making informed change here requires in-depth knowledge and most users should leave these untouched. All knobs listed here are subject to breaking changes between versions.**
 
 ### `Internal.Bitswap`
 
@@ -965,6 +973,14 @@ Values above 10Mb open the potential for aggressively-wanting peers to consume a
 deteriorate the quality provided to less aggressively-wanting peers.
 
 Type: `optionalInteger` (byte count, `null` means default which is 1MB)
+
+### `Internal.Bitswap.ProviderSearchDelay`
+
+This parameter determines how long to wait before looking for providers outside of bitswap.
+Other routing systems like the DHT are able to provide results in less than a second, so lowering 
+this number will allow faster peers lookups in some cases.
+
+Type: `optionalDuration` (`null` means default which is 1s)
 
 ### `Internal.UnixFSShardingSizeThreshold`
 
@@ -1192,9 +1208,51 @@ Default: `false`
 
 Type: `bool`
 
+### `Pubsub.SeenMessagesTTL`
+
+Controls the time window within which duplicate messages, identified by Message
+ID, will be identified and won't be emitted again.
+
+A smaller value for this parameter means that Pubsub messages in the cache will
+be garbage collected sooner, which can result in a smaller cache. At the same
+time, if there are slower nodes in the network that forward older messages,
+this can cause more duplicates to be propagated through the network.
+
+Conversely, a larger value for this parameter means that Pubsub messages in the
+cache will be garbage collected later, which can result in a larger cache for
+the same traffic pattern. However, it is less likely that duplicates will be
+propagated through the network.
+
+Default: see `TimeCacheDuration` from [go-libp2p-pubsub](https://github.com/libp2p/go-libp2p-pubsub)
+
+Type: `optionalDuration`
+
+### `Pubsub.SeenMessagesStrategy`
+
+Determines how the time-to-live (TTL) countdown for deduplicating Pubsub
+messages is calculated.
+
+The Pubsub seen messages cache is a LRU cache that keeps messages for up to a
+specified time duration. After this duration has elapsed, expired messages will
+be purged from the cache.
+
+The `last-seen` cache is a sliding-window cache. Every time a message is seen
+again with the SeenMessagesTTL duration, its timestamp slides forward. This
+keeps frequently occurring messages cached and prevents them from being
+continually propagated, especially because of issues that might increase the
+number of duplicate messages in the network.
+
+The `first-seen` cache will store new messages and purge them after the
+SeenMessagesTTL duration, even if they are seen multiple times within this
+duration.
+
+Default: `last-seen` (see [go-libp2p-pubsub](https://github.com/libp2p/go-libp2p-pubsub))
+
+Type: `optionalString`
+
 ## `Peering`
 
-Configures the peering subsystem. The peering subsystem configures go-ipfs to
+Configures the peering subsystem. The peering subsystem configures Kubo to
 connect to, remain connected to, and reconnect to a set of nodes. Nodes should
 use this subsystem to create "sticky" links between frequently useful peers to
 improve reliability.
@@ -1203,15 +1261,15 @@ Use-cases:
 
 * An IPFS gateway connected to an IPFS cluster should peer to ensure that the
   gateway can always fetch content from the cluster.
-* A dapp may peer embedded go-ipfs nodes with a set of pinning services or
+* A dapp may peer embedded Kubo nodes with a set of pinning services or
   textile cafes/hubs.
 * A set of friends may peer to ensure that they can always fetch each other's
   content.
 
-When a node is added to the set of peered nodes, go-ipfs will:
+When a node is added to the set of peered nodes, Kubo will:
 
 1. Protect connections to this node from the connection manager. That is,
-   go-ipfs will never automatically close the connection to this node and
+   Kubo will never automatically close the connection to this node and
    connections to this node will not count towards the connection limit.
 2. Connect to this node on startup.
 3. Repeatedly try to reconnect to this node if the last connection dies or the
@@ -1272,16 +1330,17 @@ not being able to discover that you have the objects that you have. If you want
 to have this disabled and keep the network aware of what you have, you must
 manually announce your content periodically.
 
-Type: `array[peering]`
+Type: `duration`
 
 ### `Reprovider.Strategy`
 
 Tells reprovider what should be announced. Valid strategies are:
-  - "all" - announce all stored data
-  - "pinned" - only announce pinned data
-  - "roots" - only announce directly pinned keys and root keys of recursive pins
 
-Default: all
+- `"all"` - announce all CIDs of stored blocks
+- `"pinned"` - only announce pinned CIDs recursively (both roots and child blocks)
+- `"roots"` - only announce the root block of explicitly pinned CIDs
+
+Default: `"all"`
 
 Type: `string` (or unset for the default, which is "all")
 
@@ -1291,44 +1350,183 @@ Contains options for content, peer, and IPNS routing mechanisms.
 
 ### `Routing.Type`
 
-Content routing mode. Can be overridden with daemon `--routing` flag.
+There are multiple routing options: "auto", "none", "dht" and "custom".
 
-There are two core routing options: "none" and "dht" (default).
+* **DEFAULT:** If unset, or set to "auto", your node will use the IPFS DHT
+  and parallel HTTP routers listed below for additional speed.
 
 * If set to "none", your node will use _no_ routing system. You'll have to
   explicitly connect to peers that have the content you're looking for.
-* If set to "dht" (or "dhtclient"/"dhtserver"), your node will use the IPFS DHT.
+
+* If set to "dht" (or "dhtclient"/"dhtserver"), your node will ONLY use the IPFS DHT (no HTTP routers).
+
+* If set to "custom", all default routers are disabled, and only ones defined in `Routing.Routers` will be used.
 
 When the DHT is enabled, it can operate in two modes: client and server.
 
 * In server mode, your node will query other peers for DHT records, and will
   respond to requests from other peers (both requests to store records and
   requests to retrieve records).
+
 * In client mode, your node will query the DHT as a client but will not respond
   to requests from other peers. This mode is less resource-intensive than server
   mode.
 
-When `Routing.Type` is set to `dht`, your node will start as a DHT client, and
+When `Routing.Type` is set to `auto` or `dht`, your node will start as a DHT client, and
 switch to a DHT server when and if it determines that it's reachable from the
 public internet (e.g., it's not behind a firewall).
 
-To force a specific DHT mode, client or server, set `Routing.Type` to
+To force a specific DHT-only mode, client or server, set `Routing.Type` to
 `dhtclient` or `dhtserver` respectively. Please do not set this to `dhtserver`
 unless you're sure your node is reachable from the public network.
 
-**Example:**
+When `Routing.Type` is set to `auto` your node will accelerate some types of routing
+by leveraging HTTP endpoints compatible with [IPIP-337](https://github.com/ipfs/specs/pull/337)
+in addition to the IPFS DHT.
+By default, an instance of [IPNI](https://github.com/ipni/specs/blob/main/IPNI.md#readme)
+at https://cid.contact is used.
+Alternative routing rules can be configured in `Routing.Routers` after setting `Routing.Type` to `custom`.
 
-```json
-{
-  "Routing": {
-    "Type": "dhtclient"
-  }
-}
+Default: `auto` (DHT + IPNI)
+
+Type: `optionalString` (`null`/missing means the default)
+
+### `Routing.Routers`
+
+**EXPERIMENTAL: `Routing.Routers` configuration may change in future release**
+
+Map of additional Routers.
+
+Allows for extending the default routing (DHT) with alternative Router
+implementations.
+
+The map key is a name of a Router, and the value is its configuration.
+
+Default: `{}`
+
+Type: `object[string->object]`
+
+#### `Routing.Routers: Type`
+
+**EXPERIMENTAL: `Routing.Routers` configuration may change in future release**
+
+It specifies the routing type that will be created.
+
+Currently supported types:
+
+- `http` simple delegated routing based on HTTP protocol from [IPIP-337](https://github.com/ipfs/specs/pull/337)
+- `dht` provides decentralized routing based on [libp2p's kad-dht](https://github.com/libp2p/specs/tree/master/kad-dht)
+- `parallel` and `sequential`: Helpers that can be used to run several routers sequentially or in parallel.
+
+Type: `string`
+
+#### `Routing.Routers: Parameters`
+
+**EXPERIMENTAL: `Routing.Routers` configuration may change in future release**
+
+Parameters needed to create the specified router. Supported params per router type:
+
+HTTP:
+  - `Endpoint` (mandatory): URL that will be used to connect to a specified router.
+  - `MaxProvideBatchSize`: This number determines the maximum amount of CIDs sent per batch. Servers might not accept more than 100 elements per batch. 100 elements by default.
+  - `MaxProvideConcurrency`: It determines the number of threads used when providing content. GOMAXPROCS by default.
+
+DHT:
+  - `"Mode"`: Mode used by the DHT. Possible values: "server", "client", "auto"
+  - `"AcceleratedDHTClient"`: Set to `true` if you want to use the experimentalDHT.
+  - `"PublicIPNetwork"`: Set to `true` to create a `WAN` DHT. Set to `false` to create a `LAN` DHT.
+
+Parallel:
+  - `Routers`: A list of routers that will be executed in parallel:
+    - `Name:string`: Name of the router. It should be one of the previously added to `Routers` list.
+    - `Timeout:duration`: Local timeout. It accepts strings compatible with Go `time.ParseDuration(string)` (`10s`, `1m`, `2h`). Time will start counting when this specific router is called, and it will stop when the router returns, or we reach the specified timeout.
+    - `ExecuteAfter:duration`: Providing this param will delay the execution of that router at the specified time. It accepts strings compatible with Go `time.ParseDuration(string)` (`10s`, `1m`, `2h`).
+    - `IgnoreErrors:bool`: It will specify if that router should be ignored if an error occurred.
+  - `Timeout:duration`: Global timeout.  It accepts strings compatible with Go `time.ParseDuration(string)` (`10s`, `1m`, `2h`).
+
+Sequential:
+  - `Routers`: A list of routers that will be executed in order:
+    - `Name:string`: Name of the router. It should be one of the previously added to `Routers` list.
+    - `Timeout:duration`: Local timeout. It accepts strings compatible with Go `time.ParseDuration(string)`. Time will start counting when this specific router is called, and it will stop when the router returns, or we reach the specified timeout.
+    - `IgnoreErrors:bool`: It will specify if that router should be ignored if an error occurred.
+  - `Timeout:duration`: Global timeout.  It accepts strings compatible with Go `time.ParseDuration(string)`.
+
+Default: `{}` (use the safe implicit defaults)
+
+Type: `object[string->string]`
+
+### `Routing: Methods`
+
+`Methods:map` will define which routers will be executed per method. The key will be the name of the method: `"provide"`, `"find-providers"`, `"find-peers"`, `"put-ipns"`, `"get-ipns"`. All methods must be added to the list.
+
+The value will contain:
+- `RouterName:string`: Name of the router. It should be one of the previously added to `Routing.Routers` list.
+
+Type: `object[string->object]`
+
+**Examples:**
+
+Complete example using 2 Routers, DHT (LAN/WAN) and parallel.
+
 ```
+$ ipfs config Routing.Type --json '"custom"'
 
-Default: dht
+$ ipfs config Routing.Routers.WanDHT --json '{
+  "Type": "dht",
+  "Parameters": {
+    "Mode": "auto",
+    "PublicIPNetwork": true,
+    "AcceleratedDHTClient": false
+  }
+}'
 
-Type: `string` (or unset for the default)
+$ ipfs config Routing.Routers.LanDHT --json '{
+  "Type": "dht",
+  "Parameters": {
+    "Mode": "auto",
+    "PublicIPNetwork": false,
+    "AcceleratedDHTClient": false
+  }
+}'
+
+$ ipfs config Routing.Routers.ParallelHelper --json '{
+  "Type": "parallel",
+  "Parameters": {
+    "Routers": [
+        {
+        "RouterName" : "LanDHT",
+        "IgnoreErrors" : true,
+        "Timeout": "3s"
+        },
+        {
+        "RouterName" : "WanDHT",
+        "IgnoreErrors" : false,
+        "Timeout": "5m",
+        "ExecuteAfter": "2s"
+        }
+    ]
+  }
+}'
+
+ipfs config Routing.Methods --json '{
+      "find-peers": {
+        "RouterName": "ParallelHelper"
+      },
+      "find-providers": {
+        "RouterName": "ParallelHelper"
+      },
+      "get-ipns": {
+        "RouterName": "ParallelHelper"
+      },
+      "provide": {
+        "RouterName": "ParallelHelper"
+      },
+      "put-ipns": {
+        "RouterName": "ParallelHelper"
+      }
+    }'
+
+```
 
 ## `Swarm`
 
@@ -1366,10 +1564,10 @@ Type: `bool`
 
 Disable automatic NAT port forwarding.
 
-When not disabled (default), go-ipfs asks NAT devices (e.g., routers), to open
-up an external port and forward it to the port go-ipfs is running on. When this
+When not disabled (default), Kubo asks NAT devices (e.g., routers), to open
+up an external port and forward it to the port Kubo is running on. When this
 works (i.e., when your router supports NAT port forwarding), it makes the local
-go-ipfs node accessible from the public internet.
+Kubo node accessible from the public internet.
 
 Default: `false`
 
@@ -1380,7 +1578,7 @@ Type: `bool`
 Enable hole punching for NAT traversal
 when port forwarding is not possible.
 
-When enabled, go-ipfs will coordinate with the counterparty using
+When enabled, Kubo will coordinate with the counterparty using
 a [relayed connection](https://github.com/libp2p/specs/blob/master/relay/circuit-v2.md),
 to [upgrade to a direct connection](https://github.com/libp2p/specs/blob/master/relay/DCUtR.md)
 through a NAT/firewall whenever possible.
@@ -1473,7 +1671,7 @@ Type: `optionalInteger`
 
 #### `Swarm.RelayService.ReservationTTL`
 
-Duration of a new or refreshed reservation. 
+Duration of a new or refreshed reservation.
 
 Default: `"1h"`
 
@@ -1548,17 +1746,18 @@ Set `Swarm.Transports.Network.Relay` to `false` instead.
 
 **REMOVED**
 
-Please use [`AutoNAT.ServiceMode`][#autonatservicemode].
+Please use [`AutoNAT.ServiceMode`](#autonatservicemode).
 
 ### `Swarm.ConnMgr`
 
 The connection manager determines which and how many connections to keep and can
-be configured to keep. Go-ipfs currently supports two connection managers:
+be configured to keep. Kubo currently supports two connection managers:
 
 * none: never close idle connections.
 * basic: the default connection manager.
 
-Default: basic
+By default, this section is empty and the implicit defaults defined below
+are used.
 
 #### `Swarm.ConnMgr.Type`
 
@@ -1567,8 +1766,7 @@ management) and `"basic"`.
 
 Default: "basic".
 
-Type: `string` (when unset or `""`, the default connection manager is applied
-and all `ConnMgr` fields are ignored).
+Type: `optionalString` (default when unset or empty)
 
 #### Basic Connection Manager
 
@@ -1605,9 +1803,9 @@ The connection manager considers a connection idle if:
 LowWater is the number of connections that the basic connection manager will
 trim down to.
 
-Default: `600`
+Default: `32`
 
-Type: `integer`
+Type: `optionalInteger`
 
 ##### `Swarm.ConnMgr.HighWater`
 
@@ -1615,9 +1813,9 @@ HighWater is the number of connections that, when exceeded, will trigger a
 connection GC operation. Note: protected/recently formed connections don't count
 towards this limit.
 
-Default: `900`
+Default: `96`
 
-Type: `integer`
+Type: `optionalInteger`
 
 ##### `Swarm.ConnMgr.GracePeriod`
 
@@ -1626,42 +1824,68 @@ by the connection manager.
 
 Default: `"20s"`
 
-Type: `duration`
+Type: `optionalDuration`
 
 ### `Swarm.ResourceMgr`
 
-The [libp2p Network Resource Manager](https://github.com/libp2p/go-libp2p-resource-manager#readme) allows setting limits per a scope,
-and tracking recource usage over time.
+Learn more about Kubo's usage of libp2p Network Resource Manager
+in the [dedicated resource management docs](./libp2p-resource-management.md).
 
 #### `Swarm.ResourceMgr.Enabled`
-Enables the libp2p Network Resource Manager and auguments the default limits
-using user-defined ones in `Swarm.ResourceMgr.Limits` (if present).
+
+Enables the libp2p Resource Manager using limits based on the defaults and/or other configuration as discussed in [libp2p resource management](./libp2p-resource-management.md).
 
 Default: `true`
-
 Type: `flag`
+
+#### `Swarm.ResourceMgr.MaxMemory`
+
+This is the max amount of memory to allow libp2p to use.
+libp2p's resource manager will prevent additional resource creation while this limit is reached.
+This value is also used to scale the limit on various resources at various scopes
+when the default limits (discussed in [libp2p resource management](./libp2p-resource-management.md)) are used.
+For example, increasing this value will increase the default limit for incoming connections.
+
+Default: `[TOTAL_SYSTEM_MEMORY]/2`
+Type: `optionalBytes`
+
+#### `Swarm.ResourceMgr.MaxFileDescriptors`
+
+This is the maximum number of file descriptors to allow libp2p to use.
+libp2p's resource manager will prevent additional file descriptor consumption while this limit is reached.
+
+This param is ignored on Windows.
+
+Default `[TOTAL_SYSTEM_FILE_DESCRIPTORS]/2`
+Type: `optionalInteger`
 
 #### `Swarm.ResourceMgr.Limits`
 
-Map of resource limits [per scope](https://github.com/libp2p/go-libp2p-resource-manager#resource-scopes).
+Map of resource limits [per scope](https://github.com/libp2p/go-libp2p/tree/master/p2p/host/resource-manager#resource-scopes).
 
-The map supports fields from [`BasicLimiterConfig`](https://github.com/libp2p/go-libp2p-resource-manager/blob/v0.3.0/limit_config.go#L165-L185)
-struct from [go-libp2p-resource-manager](https://github.com/libp2p/go-libp2p-resource-manager#readme).
+The map supports fields from the [`LimitConfig` struct](https://github.com/libp2p/go-libp2p/blob/master/p2p/host/resource-manager/limit_defaults.go#L111).
 
-Example:
+[`BaseLimit`s](https://github.com/libp2p/go-libp2p/blob/master/p2p/host/resource-manager/limit.go#L89) can be set for any scope, and within the `BaseLimit`, all limit <key,value>s are optional.
 
+The `Swarm.ResourceMgr.Limits` override the default limits described above.
+Any override `BaseLimits` or limit <key,value>s from `Swarm.ResourceMgr.Limits`
+that aren't specified will use the [computed default limits](./libp2p-resource-management.md#computed-default-limits).
+
+Until [ipfs/kubo#9564](https://github.com/ipfs/kubo/issues/9564) is addressed, there isn't a way to set an override limit of zero.
+0 is currently ignored.  0 currently means use to use the [computed default limits](./libp2p-resource-management.md#computed-default-limits).
+
+Example #1: setting limits for a specific scope
 ```json
 {
   "Swarm": {
     "ResourceMgr": {
-      "Enabled": true,
       "Limits": {
         "System": {
+          "Memory": 1073741824,
+          "FD": 512,
           "Conns": 1024,
           "ConnsInbound": 256,
           "ConnsOutbound": 1024,
-          "FD": 512,
-          "Memory": 1073741824,
           "Streams": 16384,
           "StreamsInbound": 4096,
           "StreamsOutbound": 16384
@@ -1672,16 +1896,36 @@ Example:
 }
 ```
 
-Current resource usage and a list of services, protocols, and peers can be
-obtained via `ipfs swarm stats --help`
+Example #2: setting a specific <key,value> limit
+```json
+{
+  "Swarm": {
+    "ResourceMgr": {
+      "Limits": {
+        "Transient": {
+          "ConnsOutbound": 256,
+        }
+      }
+    }
+  }
+}
+```
 
-It is also possible to adjust some runtime limits via `ipfs stats limit --help`.
-Changes made via `stats limit` are persisted in `Swarm.ResourceMgr.Limits`.
+It is also possible to inspect and adjust some runtime limits via `ipfs swarm stats --help` and `ipfs swarm limit --help`.
+Changes made via `ipfs swarm limit` are persisted in `Swarm.ResourceMgr.Limits`.
 
-Default: `{}` (use the safe implicit defaults)
+Default: `{}` (use the [computed defaults](./libp2p-resource-management.md#computed-default-limits))
 
 Type: `object[string->object]`
 
+#### `Swarm.ResourceMgr.Allowlist`
+
+A list of multiaddrs that can bypass normal system limits (but are still limited by the allowlist scope).
+Convenience config around [go-libp2p-resource-manager#Allowlist.Add](https://pkg.go.dev/github.com/libp2p/go-libp2p/p2p/host/resource-manager#Allowlist.Add).
+
+Default: `[]`
+
+Type: `array[string]` (multiaddrs)
 
 ### `Swarm.Transports`
 
@@ -1694,14 +1938,14 @@ Configuration section for libp2p _network_ transports. Transports enabled in
 this section will be used for dialing. However, to receive connections on these
 transports, multiaddrs for these transports must be added to `Addresses.Swarm`.
 
-Supported transports are: QUIC, TCP, WS, and Relay.
+Supported transports are: QUIC, TCP, WS, Relay and WebTransport.
 
 Each field in this section is a `flag`.
 
 #### `Swarm.Transports.Network.TCP`
 
 [TCP](https://en.wikipedia.org/wiki/Transmission_Control_Protocol) is the most
-widely used transport by go-ipfs nodes. It doesn't directly support encryption
+widely used transport by Kubo nodes. It doesn't directly support encryption
 and/or multiplexing, so libp2p will layer a security & multiplexing transport
 over it.
 
@@ -1718,7 +1962,7 @@ Listen Addresses:
 [Websocket](https://en.wikipedia.org/wiki/WebSocket) is a transport usually used
 to connect to non-browser-based IPFS nodes from browser-based js-ipfs nodes.
 
-While it's enabled by default for dialing, go-ipfs doesn't listen on this
+While it's enabled by default for dialing, Kubo doesn't listen on this
 transport by default.
 
 Default: Enabled
@@ -1770,6 +2014,27 @@ Listen Addresses:
 * This transport is special. Any node that enables this transport can receive
   inbound connections on this transport, without specifying a listen address.
 
+
+#### `Swarm.Transports.Network.WebTransport`
+
+A new feature of [`go-libp2p`](https://github.com/libp2p/go-libp2p/releases/tag/v0.23.0)
+is the [WebTransport](https://github.com/libp2p/go-libp2p/issues/1717) transport.
+
+This is a spiritual descendant of WebSocket but over `HTTP/3`.
+Since this runs on top of `HTTP/3` it uses `QUIC` under the hood.
+We expect it to perform worst than `QUIC` because of the extra overhead,
+this transport is really meant at agents that cannot do `TCP` or `QUIC` (like browsers).
+
+WebTransport is a new transport protocol currently under development by the IETF and the W3C, and already implemented by Chrome.
+Conceptually, it’s like WebSocket run over QUIC instead of TCP. Most importantly, it allows browsers to establish (secure!) connections to WebTransport servers without the need for CA-signed certificates,
+thereby enabling any js-libp2p node running in a browser to connect to any kubo node, with zero manual configuration involved.
+
+The previous alternative is websocket secure, which require installing a reverse proxy and TLS certificates manually.
+
+Default: Enabled
+
+Type: `flag`
+
 ### `Swarm.Transports.Security`
 
 Configuration section for libp2p _security_ transports. Transports enabled in
@@ -1777,9 +2042,9 @@ this section will be used to secure unencrypted connections.
 
 Security transports are configured with the `priority` type.
 
-When establishing an _outbound_ connection, go-ipfs will try each security
+When establishing an _outbound_ connection, Kubo will try each security
 transport in priority order (lower first), until it finds a protocol that the
-receiver supports. When establishing an _inbound_ connection, go-ipfs will let
+receiver supports. When establishing an _inbound_ connection, Kubo will let
 the initiator choose the protocol, but will refuse to use any of the disabled
 transports.
 
@@ -1790,7 +2055,7 @@ No default priority will ever be less than 100.
 #### `Swarm.Transports.Security.TLS`
 
 [TLS](https://github.com/libp2p/specs/tree/master/tls) (1.3) is the default
-security transport as of go-ipfs 0.5.0. It's also the most scrutinized and
+security transport as of Kubo 0.5.0. It's also the most scrutinized and
 trusted security transport.
 
 Default: `100`
@@ -1827,7 +2092,7 @@ No default priority will ever be less than 100.
 
 ### `Swarm.Transports.Multiplexers.Yamux`
 
-Yamux is the default multiplexer used when communicating between go-ipfs nodes.
+Yamux is the default multiplexer used when communicating between Kubo nodes.
 
 Default: `100`
 
@@ -1835,7 +2100,7 @@ Type: `priority`
 
 ### `Swarm.Transports.Multiplexers.Mplex`
 
-Mplex is the default multiplexer used when communicating between go-ipfs and all
+Mplex is the default multiplexer used when communicating between Kubo and all
 other IPFS and libp2p implementations. Unlike Yamux:
 
 * Mplex is a simpler protocol.
@@ -1853,7 +2118,7 @@ Type: `priority`
 
 ## `DNS`
 
-Options for configuring DNS resolution for [DNSLink](https://docs.ipfs.io/concepts/dnslink/) and `/dns*` [Multiaddrs](https://github.com/multiformats/multiaddr/).
+Options for configuring DNS resolution for [DNSLink](https://docs.ipfs.tech/concepts/dnslink/) and `/dns*` [Multiaddrs](https://github.com/multiformats/multiaddr/).
 
 ### `DNS.Resolvers`
 
@@ -1867,7 +2132,7 @@ Example:
 {
   "DNS": {
     "Resolvers": {
-      "eth.": "https://eth.link/dns-query",
+      "eth.": "https://dns.eth.limo/dns-query",
       "crypto.": "https://resolver.unstoppable.io/dns-query",
       "libre.": "https://ns1.iriseden.fr/dns-query",
       ".": "https://cloudflare-dns.com/dns-query"

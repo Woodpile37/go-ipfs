@@ -12,26 +12,27 @@ import (
 	"runtime/pprof"
 	"time"
 
-	util "github.com/ipfs/go-ipfs/cmd/ipfs/util"
-	oldcmds "github.com/ipfs/go-ipfs/commands"
-	core "github.com/ipfs/go-ipfs/core"
-	corecmds "github.com/ipfs/go-ipfs/core/commands"
-	corehttp "github.com/ipfs/go-ipfs/core/corehttp"
-	loader "github.com/ipfs/go-ipfs/plugin/loader"
-	repo "github.com/ipfs/go-ipfs/repo"
-	fsrepo "github.com/ipfs/go-ipfs/repo/fsrepo"
-	"github.com/ipfs/go-ipfs/tracing"
-	"go.opentelemetry.io/otel"
+	"github.com/ipfs/kubo/cmd/ipfs/util"
+	oldcmds "github.com/ipfs/kubo/commands"
+	"github.com/ipfs/kubo/core"
+	corecmds "github.com/ipfs/kubo/core/commands"
+	"github.com/ipfs/kubo/core/corehttp"
+	"github.com/ipfs/kubo/plugin/loader"
+	"github.com/ipfs/kubo/repo"
+	"github.com/ipfs/kubo/repo/fsrepo"
+	"github.com/ipfs/kubo/tracing"
 
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	"github.com/ipfs/go-ipfs-cmds/cli"
 	cmdhttp "github.com/ipfs/go-ipfs-cmds/http"
 	u "github.com/ipfs/go-ipfs-util"
 	logging "github.com/ipfs/go-log"
-	loggables "github.com/libp2p/go-libp2p-loggables"
 	ma "github.com/multiformats/go-multiaddr"
 	madns "github.com/multiformats/go-multiaddr-dns"
 	manet "github.com/multiformats/go-multiaddr/net"
+
+	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
 )
 
 // log is the command logger
@@ -77,9 +78,19 @@ func printErr(err error) int {
 	return 1
 }
 
+func newUUID(key string) logging.Metadata {
+	ids := "#UUID-ERROR#"
+	if id, err := uuid.NewRandom(); err == nil {
+		ids = id.String()
+	}
+	return logging.Metadata{
+		key: ids,
+	}
+}
+
 func mainRet() (exitCode int) {
 	rand.Seed(time.Now().UnixNano())
-	ctx := logging.ContextWithLoggable(context.Background(), loggables.Uuid("session"))
+	ctx := logging.ContextWithLoggable(context.Background(), newUUID("session"))
 	var err error
 
 	tp, err := tracing.NewTracerProvider(ctx)
@@ -109,7 +120,7 @@ func mainRet() (exitCode int) {
 			os.Args[1] = "version"
 		}
 
-		//Handle `ipfs help` and `ipfs help <sub-command>`
+		// Handle `ipfs help` and `ipfs help <sub-command>`
 		if os.Args[1] == "help" {
 			if len(os.Args) > 2 {
 				os.Args = append(os.Args[:1], os.Args[2:]...)

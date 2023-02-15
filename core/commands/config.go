@@ -5,18 +5,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"strings"
 
-	"github.com/ipfs/go-ipfs/core/commands/cmdenv"
-	"github.com/ipfs/go-ipfs/repo"
-	"github.com/ipfs/go-ipfs/repo/fsrepo"
+	"github.com/ipfs/kubo/core/commands/cmdenv"
+	"github.com/ipfs/kubo/repo"
+	"github.com/ipfs/kubo/repo/fsrepo"
 
 	"github.com/elgris/jsondiff"
 	cmds "github.com/ipfs/go-ipfs-cmds"
-	config "github.com/ipfs/go-ipfs/config"
+	config "github.com/ipfs/kubo/config"
 )
 
 // ConfigUpdateOutput is config profile apply command's output
@@ -153,6 +152,7 @@ Set the value of the 'Datastore.Path' key:
 // A pattern matches a part if and only if the pattern is "*" or the lowercase pattern equals the lowercase part.
 //
 // For example:
+//
 //	matchesGlobPrefix("foo.bar", []string{"*", "bar", "baz"}) returns true
 //	matchesGlobPrefix("foo.bar.baz", []string{"*", "bar"}) returns true
 //	matchesGlobPrefix("foo.bar", []string{"baz", "*"}) returns false
@@ -192,7 +192,7 @@ NOTE: For security reasons, this command will omit your private key and remote s
 			return err
 		}
 
-		data, err := ioutil.ReadFile(fname)
+		data, err := os.ReadFile(fname)
 		if err != nil {
 			return err
 		}
@@ -502,7 +502,7 @@ func editConfig(filename string) error {
 		return errors.New("ENV variable $EDITOR not set")
 	}
 
-	cmd := exec.Command("sh", "-c", editor+" "+filename)
+	cmd := exec.Command(editor, filename)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return cmd.Run()
 }

@@ -6,8 +6,9 @@ import (
 	"time"
 
 	"github.com/benbjohnson/clock"
-	"github.com/libp2p/go-libp2p-core/network"
-	rcmgr "github.com/libp2p/go-libp2p-resource-manager"
+	"github.com/libp2p/go-libp2p/core/network"
+	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
+	ma "github.com/multiformats/go-multiaddr"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
@@ -15,8 +16,12 @@ import (
 
 func TestLoggingResourceManager(t *testing.T) {
 	clock := clock.NewMock()
-	limiter := rcmgr.NewDefaultLimiter()
-	limiter.SystemLimits = limiter.SystemLimits.WithConnLimit(1, 1, 1)
+	orig := rcmgr.DefaultLimits.AutoScale()
+	limits := orig.ToPartialLimitConfig()
+	limits.System.Conns = 1
+	limits.System.ConnsInbound = 1
+	limits.System.ConnsOutbound = 1
+	limiter := rcmgr.NewFixedLimiter(limits.Build(orig))
 	rm, err := rcmgr.NewResourceManager(limiter)
 	if err != nil {
 		t.Fatal(err)
@@ -33,7 +38,7 @@ func TestLoggingResourceManager(t *testing.T) {
 
 	// 2 of these should result in resource limit exceeded errors and subsequent log messages
 	for i := 0; i < 3; i++ {
-		_, _ = lrm.OpenConnection(network.DirInbound, false)
+		_, _ = lrm.OpenConnection(network.DirInbound, false, ma.StringCast("/ip4/127.0.0.1/tcp/1234"))
 	}
 
 	// run the logger which will write an entry for those errors
@@ -51,7 +56,7 @@ func TestLoggingResourceManager(t *testing.T) {
 			if oLogs.Len() == 0 {
 				continue
 			}
-			require.Equal(t, "Resource limits were exceeded 2 times, consider inspecting logs and raising the resource manager limits.", oLogs.All()[0].Message)
+			require.Equal(t, "Protected from exceeding resource limits 2 times.  libp2p message: \"system: cannot reserve inbound connection: resource limit exceeded\".", oLogs.All()[0].Message)
 			return
 		}
 	}

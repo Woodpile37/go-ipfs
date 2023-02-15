@@ -8,14 +8,14 @@ import (
 	"runtime"
 	"strings"
 
-	config "github.com/ipfs/go-ipfs/config"
-	cserialize "github.com/ipfs/go-ipfs/config/serialize"
+	config "github.com/ipfs/kubo/config"
+	cserialize "github.com/ipfs/kubo/config/serialize"
 	"github.com/ipld/go-ipld-prime/multicodec"
 
-	"github.com/ipfs/go-ipfs/core"
-	"github.com/ipfs/go-ipfs/core/coreapi"
-	plugin "github.com/ipfs/go-ipfs/plugin"
-	fsrepo "github.com/ipfs/go-ipfs/repo/fsrepo"
+	"github.com/ipfs/kubo/core"
+	"github.com/ipfs/kubo/core/coreapi"
+	plugin "github.com/ipfs/kubo/plugin"
+	fsrepo "github.com/ipfs/kubo/repo/fsrepo"
 
 	logging "github.com/ipfs/go-log"
 	opentracing "github.com/opentracing/opentracing-go"
@@ -79,12 +79,12 @@ func (ls loaderState) String() string {
 // PluginLoader keeps track of loaded plugins.
 //
 // To use:
-// 1. Load any desired plugins with Load and LoadDirectory. Preloaded plugins
-//    will automatically be loaded.
-// 2. Call Initialize to run all initialization logic.
-// 3. Call Inject to register the plugins.
-// 4. Optionally call Start to start plugins.
-// 5. Call Close to close all plugins.
+//  1. Load any desired plugins with Load and LoadDirectory. Preloaded plugins
+//     will automatically be loaded.
+//  2. Call Initialize to run all initialization logic.
+//  3. Call Inject to register the plugins.
+//  4. Optionally call Start to start plugins.
+//  5. Call Close to close all plugins.
 type PluginLoader struct {
 	state   loaderState
 	plugins map[string]plugin.Plugin
@@ -241,7 +241,6 @@ func (loader *PluginLoader) Inject() error {
 
 	for _, pl := range loader.plugins {
 		if pl, ok := pl.(plugin.PluginIPLD); ok {
-
 			err := injectIPLDPlugin(pl)
 			if err != nil {
 				loader.state = loaderFailed
@@ -257,6 +256,13 @@ func (loader *PluginLoader) Inject() error {
 		}
 		if pl, ok := pl.(plugin.PluginDatastore); ok {
 			err := injectDatastorePlugin(pl)
+			if err != nil {
+				loader.state = loaderFailed
+				return err
+			}
+		}
+		if pl, ok := pl.(plugin.PluginFx); ok {
+			err := injectFxPlugin(pl)
 			if err != nil {
 				loader.state = loaderFailed
 				return err
@@ -345,5 +351,10 @@ func injectTracerPlugin(pl plugin.PluginTracer) error {
 		return err
 	}
 	opentracing.SetGlobalTracer(tracer)
+	return nil
+}
+
+func injectFxPlugin(pl plugin.PluginFx) error {
+	core.RegisterFXOptionFunc(pl.Options)
 	return nil
 }

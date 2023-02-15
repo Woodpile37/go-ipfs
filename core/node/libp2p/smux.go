@@ -5,11 +5,12 @@ import (
 	"os"
 	"strings"
 
-	config "github.com/ipfs/go-ipfs/config"
+	"github.com/ipfs/kubo/config"
+
 	"github.com/libp2p/go-libp2p"
-	"github.com/libp2p/go-libp2p-core/network"
-	mplex "github.com/libp2p/go-libp2p-mplex"
-	yamux "github.com/libp2p/go-libp2p-yamux"
+	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/p2p/muxer/mplex"
+	"github.com/libp2p/go-libp2p/p2p/muxer/yamux"
 )
 
 func yamuxTransport() network.Multiplexer {
@@ -18,16 +19,12 @@ func yamuxTransport() network.Multiplexer {
 	if os.Getenv("YAMUX_DEBUG") != "" {
 		tpt.LogOutput = os.Stderr
 	}
-
 	return &tpt
 }
 
 func makeSmuxTransportOption(tptConfig config.Transports) (libp2p.Option, error) {
 	const yamuxID = "/yamux/1.0.0"
 	const mplexID = "/mplex/6.7.0"
-
-	ymxtpt := *yamux.DefaultTransport
-	ymxtpt.AcceptBacklog = 512
 
 	if prefs := os.Getenv("LIBP2P_MUX_PREFS"); prefs != "" {
 		// Using legacy LIBP2P_MUX_PREFS variable.
@@ -46,7 +43,7 @@ func makeSmuxTransportOption(tptConfig config.Transports) (libp2p.Option, error)
 			}
 			switch tpt {
 			case yamuxID:
-				opts = append(opts, libp2p.Muxer(tpt, yamuxTransport))
+				opts = append(opts, libp2p.Muxer(tpt, yamuxTransport()))
 			case mplexID:
 				opts = append(opts, libp2p.Muxer(tpt, mplex.DefaultTransport))
 			default:
@@ -58,7 +55,7 @@ func makeSmuxTransportOption(tptConfig config.Transports) (libp2p.Option, error)
 		return prioritizeOptions([]priorityOption{{
 			priority:        tptConfig.Multiplexers.Yamux,
 			defaultPriority: 100,
-			opt:             libp2p.Muxer(yamuxID, yamuxTransport),
+			opt:             libp2p.Muxer(yamuxID, yamuxTransport()),
 		}, {
 			priority:        tptConfig.Multiplexers.Mplex,
 			defaultPriority: 200,

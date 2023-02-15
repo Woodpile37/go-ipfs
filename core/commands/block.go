@@ -6,10 +6,10 @@ import (
 	"io"
 	"os"
 
-	files "github.com/ipfs/go-ipfs-files"
+	"github.com/ipfs/go-libipfs/files"
 
-	cmdenv "github.com/ipfs/go-ipfs/core/commands/cmdenv"
-	"github.com/ipfs/go-ipfs/core/commands/cmdutils"
+	cmdenv "github.com/ipfs/kubo/core/commands/cmdenv"
+	"github.com/ipfs/kubo/core/commands/cmdutils"
 
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	options "github.com/ipfs/interface-go-ipfs-core/options"

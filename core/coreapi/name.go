@@ -7,17 +7,18 @@ import (
 	"time"
 
 	keystore "github.com/ipfs/go-ipfs-keystore"
-	"github.com/ipfs/go-ipfs/tracing"
 	"github.com/ipfs/go-namesys"
+	"github.com/ipfs/kubo/tracing"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
 	ipath "github.com/ipfs/go-path"
 	coreiface "github.com/ipfs/interface-go-ipfs-core"
 	caopts "github.com/ipfs/interface-go-ipfs-core/options"
+	nsopts "github.com/ipfs/interface-go-ipfs-core/options/namesys"
 	path "github.com/ipfs/interface-go-ipfs-core/path"
-	ci "github.com/libp2p/go-libp2p-core/crypto"
-	peer "github.com/libp2p/go-libp2p-core/peer"
+	ci "github.com/libp2p/go-libp2p/core/crypto"
+	peer "github.com/libp2p/go-libp2p/core/peer"
 )
 
 type NameAPI CoreAPI
@@ -74,13 +75,17 @@ func (api *NameAPI) Publish(ctx context.Context, p path.Path, opts ...caopts.Nam
 		return nil, err
 	}
 
-	if options.TTL != nil {
-		// nolint: staticcheck // non-backward compatible change
-		ctx = context.WithValue(ctx, "ipns-publish-ttl", *options.TTL)
+	eol := time.Now().Add(options.ValidTime)
+
+	publishOptions := []nsopts.PublishOption{
+		nsopts.PublishWithEOL(eol),
 	}
 
-	eol := time.Now().Add(options.ValidTime)
-	err = api.namesys.PublishWithEOL(ctx, k, pth, eol)
+	if options.TTL != nil {
+		publishOptions = append(publishOptions, nsopts.PublishWithTTL(*options.TTL))
+	}
+
+	err = api.namesys.Publish(ctx, k, pth, publishOptions...)
 	if err != nil {
 		return nil, err
 	}

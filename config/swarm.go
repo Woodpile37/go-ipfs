@@ -1,6 +1,6 @@
 package config
 
-import rcmgr "github.com/libp2p/go-libp2p-resource-manager"
+import rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
 
 type SwarmConfig struct {
 	// AddrFilters specifies a set libp2p addresses that we should never
@@ -104,6 +104,8 @@ type Transports struct {
 		TCP       Flag `json:",omitempty"`
 		Websocket Flag `json:",omitempty"`
 		Relay     Flag `json:",omitempty"`
+		// except WebTransport which is experimental and optin.
+		WebTransport Flag `json:",omitempty"`
 	}
 
 	// Security specifies the transports used to encrypt insecure network
@@ -129,18 +131,26 @@ type Transports struct {
 
 // ConnMgr defines configuration options for the libp2p connection manager
 type ConnMgr struct {
-	Type        string
-	LowWater    int
-	HighWater   int
-	GracePeriod string
+	Type        *OptionalString   `json:",omitempty"`
+	LowWater    *OptionalInteger  `json:",omitempty"`
+	HighWater   *OptionalInteger  `json:",omitempty"`
+	GracePeriod *OptionalDuration `json:",omitempty"`
 }
 
 // ResourceMgr defines configuration options for the libp2p Network Resource Manager
-// <https://github.com/libp2p/go-libp2p-resource-manager#readme>
+// <https://github.com/libp2p/go-libp2p/tree/master/p2p/host/resource-manager#readme>
 type ResourceMgr struct {
 	// Enables the Network Resource Manager feature, default to on.
 	Enabled Flag                      `json:",omitempty"`
-	Limits  *rcmgr.BasicLimiterConfig `json:",omitempty"`
+	Limits  *rcmgr.PartialLimitConfig `json:",omitempty"`
+
+	MaxMemory          *OptionalString  `json:",omitempty"`
+	MaxFileDescriptors *OptionalInteger `json:",omitempty"`
+
+	// A list of multiaddrs that can bypass normal system limits (but are still
+	// limited by the allowlist scope). Convenience config around
+	// https://pkg.go.dev/github.com/libp2p/go-libp2p/p2p/host/resource-manager#Allowlist.Add
+	Allowlist []string `json:",omitempty"`
 }
 
 const (

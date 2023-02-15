@@ -11,7 +11,7 @@ import (
 	cidutil "github.com/ipfs/go-cidutil"
 	cmds "github.com/ipfs/go-ipfs-cmds"
 	verifcid "github.com/ipfs/go-verifcid"
-	"github.com/ipld/go-ipld-prime/multicodec"
+	ipldmulticodec "github.com/ipld/go-ipld-prime/multicodec"
 	mbase "github.com/multiformats/go-multibase"
 	mc "github.com/multiformats/go-multicodec"
 	mhash "github.com/multiformats/go-multihash"
@@ -34,7 +34,7 @@ var CidCmd = &cmds.Command{
 const (
 	cidFormatOptionName    = "f"
 	cidVerisonOptionName   = "v"
-	cidCodecOptionName     = "codec"
+	cidCodecOptionName     = "mc"
 	cidMultibaseOptionName = "b"
 )
 
@@ -53,7 +53,7 @@ The optional format string is a printf style format string:
 	Options: []cmds.Option{
 		cmds.StringOption(cidFormatOptionName, "Printf style format string.").WithDefault("%s"),
 		cmds.StringOption(cidVerisonOptionName, "CID version to convert to."),
-		cmds.StringOption(cidCodecOptionName, "CID codec to convert to."),
+		cmds.StringOption(cidCodecOptionName, "CID multicodec to convert to."),
 		cmds.StringOption(cidMultibaseOptionName, "Multibase to display CID in."),
 	},
 	Run: func(req *cmds.Request, resp cmds.ResponseEmitter, env cmds.Environment) error {
@@ -70,11 +70,12 @@ The optional format string is a printf style format string:
 		opts.fmtStr = fmtStr
 
 		if codecStr != "" {
-			codec, ok := cid.Codecs[codecStr]
-			if !ok {
-				return fmt.Errorf("unknown IPLD codec: %q", codecStr)
+			var codec mc.Code
+			err := codec.Set(codecStr)
+			if err != nil {
+				return err
 			}
-			opts.newCodec = codec
+			opts.newCodec = uint64(codec)
 		} // otherwise, leave it as 0 (not a valid IPLD codec)
 
 		switch verStr {
@@ -126,7 +127,7 @@ var base32Cmd = &cmds.Command{
 	Helptext: cmds.HelpText{
 		Tagline: "Convert CIDs to Base32 CID version 1.",
 		ShortDescription: `
-'ipfs cid base32' normalizes passes CIDs to their canonical case-insensitive encoding.
+'ipfs cid base32' normalizes passed CIDs to their canonical case-insensitive encoding.
 Useful when processing third-party CIDs which could come with arbitrary formats.
 `,
 	},
@@ -289,11 +290,11 @@ var basesCmd = &cmds.Command{
 				}
 				switch {
 				case prefixes && numeric:
-					fmt.Fprintf(w, "%c %5d  %s\n", code, v.Code, v.Name)
+					fmt.Fprintf(w, "%c %7d  %s\n", code, v.Code, v.Name)
 				case prefixes:
 					fmt.Fprintf(w, "%c  %s\n", code, v.Name)
 				case numeric:
-					fmt.Fprintf(w, "%5d  %s\n", v.Code, v.Name)
+					fmt.Fprintf(w, "%7d  %s\n", v.Code, v.Name)
 				default:
 					fmt.Fprintf(w, "%s\n", v.Name)
 				}
@@ -311,7 +312,7 @@ const (
 
 var codecsCmd = &cmds.Command{
 	Helptext: cmds.HelpText{
-		Tagline: "List available CID codecs.",
+		Tagline: "List available CID multicodecs.",
 		ShortDescription: `
 'ipfs cid codecs' relies on https://github.com/multiformats/go-multicodec
 `,
@@ -324,10 +325,10 @@ var codecsCmd = &cmds.Command{
 		listSupported, _ := req.Options[codecsSupportedOptionName].(bool)
 		supportedCodecs := make(map[uint64]struct{})
 		if listSupported {
-			for _, code := range multicodec.ListEncoders() {
+			for _, code := range ipldmulticodec.ListEncoders() {
 				supportedCodecs[code] = struct{}{}
 			}
-			for _, code := range multicodec.ListDecoders() {
+			for _, code := range ipldmulticodec.ListDecoders() {
 				supportedCodecs[code] = struct{}{}
 			}
 			// add libp2p-key
